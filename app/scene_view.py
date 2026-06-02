@@ -3,8 +3,8 @@ from pathlib import Path
 import numpy as np
 
 import open3d as o3d
-import open3d.visualization.gui as gui
-import open3d.visualization.rendering as rendering
+import open3d.visualization.gui as gui # type: ignore
+import open3d.visualization.rendering as rendering # type: ignore
 
 from core.model_builder import build_geometry_list_from_model_json
 import traceback
@@ -251,7 +251,10 @@ class SceneView:
         elif node.joint.type == "signal":
             node.joint_value = 1 if direction > 0 else 0
 
-        self.refresh_model()
+        gui.Application.instance.post_to_main_thread(
+            self.window,
+            self.refresh_model
+        )
     
     def refresh_model(self):
 

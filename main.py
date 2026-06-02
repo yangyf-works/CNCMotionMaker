@@ -1,5 +1,5 @@
 from app.main_window import MainWindow
-import open3d.visualization.gui as gui
+import open3d.visualization.gui as gui # type: ignore
 
 
 def main():

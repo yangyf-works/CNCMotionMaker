@@ -1,9 +1,10 @@
 from pathlib import Path
-
-import open3d.visualization.gui as gui
+import traceback
+import open3d.visualization.gui as gui # type: ignore
 
 from app.scene_view import SceneView
 from app.control_panel import ControlPanel
+from app.axis_window import AxisControlWindow
 from core.model_builder import collect_all_joint_info
 
 class MainWindow:
@@ -23,8 +24,7 @@ class MainWindow:
 
         self.control_panel = ControlPanel(
             json_dir=json_dir,
-            on_json_selected=self.on_json_selected,
-            on_joint_move=self.on_joint_move
+            on_json_selected=self.on_json_selected
         )
 
         self.window.add_child(self.scene_view.widget)
@@ -32,10 +32,15 @@ class MainWindow:
 
         self.window.set_on_layout(self._on_layout)
 
+        self.axis_window = AxisControlWindow(
+            on_joint_move=self.on_joint_move
+        )
+        self._move_axis_window()
+
     def _on_layout(self, layout_context):
 
         rect = self.window.content_rect
-        panel_width = 300
+        panel_width = 200
 
         self.scene_view.widget.frame = gui.Rect(
             rect.x,
@@ -54,19 +59,34 @@ class MainWindow:
     def on_json_selected(self, json_path):
 
         print("Load JSON:", json_path)
+        try:
 
-        self.scene_view.load_json_model(json_path)
+            self.scene_view.load_json_model(json_path)
 
-        joint_info = collect_all_joint_info(
-            self.scene_view.roots
-        )
+            joint_info = collect_all_joint_info(
+                self.scene_view.roots
+            )
+            
+            gui.Application.instance.post_to_main_thread(
+                self.axis_window.window,
+                lambda: self.axis_window.set_axis_info(joint_info)
+            )
+        except Exception:
+            traceback.print_exc()
 
-        self.control_panel.set_axis_info(joint_info)
-        self.window.set_needs_layout()
-    
     def on_joint_move(self, joint_info, direction):
 
         self.scene_view.move_joint(
             joint_info["node"],
             direction
         )
+    
+    def _move_axis_window(self):
+
+        main_rect = self.window.os_frame
+        axis_rect = self.axis_window.window.os_frame
+
+        axis_rect.x = main_rect.x + main_rect.width + 10
+        axis_rect.y = main_rect.y
+
+        self.axis_window.window.os_frame = axis_rect
