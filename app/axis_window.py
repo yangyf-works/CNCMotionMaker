@@ -1,5 +1,15 @@
 import open3d.visualization.gui as gui # type: ignore
 
+overridetable = {
+    "x0.001": 0.001,
+    "x0.01": 0.01,
+    "x0.1": 0.1,
+    "x0.5": 0.5,
+    "x1": 1.0,
+    "x2": 2.0,
+    "x5": 5.0,
+    "x10": 10.0,
+}
 
 class AxisControlWindow:
 
@@ -38,7 +48,7 @@ class AxisControlWindow:
 
         self.override_combo = gui.Combobox()
 
-        for text in ["x0.1", "x0.5", "x1", "x2", "x5", "x10"]:
+        for text in overridetable.keys():
             self.override_combo.add_item(text)
 
         self.override_combo.selected_index = 2  # x1
@@ -126,15 +136,6 @@ class AxisControlWindow:
 
     def _on_override_changed(self, text, index):
 
-        table = {
-            "x0.1": 0.1,
-            "x0.5": 0.5,
-            "x1": 1.0,
-            "x2": 2.0,
-            "x5": 5.0,
-            "x10": 10.0,
-        }
-
-        self.jog_override = table.get(text, 1.0)
+        self.jog_override = overridetable.get(text, 1.0)
 
         print("Jog Override:", self.jog_override)
