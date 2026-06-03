@@ -279,6 +279,7 @@ def collect_joint_info(node, out_list):
             ),
             "type": node.joint.type,
             "axisno": node.joint.axisno,
+            "value": node.joint_value,
         })
 
     for child in node.children:

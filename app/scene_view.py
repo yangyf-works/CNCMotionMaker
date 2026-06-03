@@ -239,13 +239,13 @@ class SceneView:
         if node.joint.type == "rotate":
 
             node.joint_value += (
-                direction * 50.0
+                direction * 1.0
             )
 
         elif node.joint.type == "linear":
 
             node.joint_value += (
-                direction * 10.0
+                direction * 1.0
             )
         
         elif node.joint.type == "signal":
