@@ -1,7 +1,6 @@
 from pathlib import Path
 
 import open3d.visualization.gui as gui # type: ignore
-import traceback
 
 class ControlPanel:
 

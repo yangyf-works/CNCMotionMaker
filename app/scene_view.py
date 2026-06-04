@@ -1,6 +1,8 @@
+import copy
 import json
 from pathlib import Path
 import numpy as np
+import math
 
 import open3d as o3d
 import open3d.visualization.gui as gui # type: ignore
@@ -14,7 +16,6 @@ class SceneView:
     def __init__(self, window):
 
         self.window = window
-
         self.widget = gui.SceneWidget()
 
         self.widget.scene = rendering.Open3DScene(
@@ -26,13 +27,13 @@ class SceneView:
         
         self.widget.scene.set_background([0, 0, 0, 1])
         
-
         self.widget.scene.scene.enable_sun_light(True)
 
         self.geometry_names = []
 
         self._create_test_geometry()
 
+        self.window.set_on_key(self._on_key)
         self.widget.set_on_mouse(self._on_mouse)
         self.roots = []
         self.realtime_sun_dir = np.array([0.0, -1.0, 0.0], dtype=float)
@@ -46,6 +47,11 @@ class SceneView:
             50000                 # 強度
         )
         
+        self.default_sun_dir = self.cur_sun_dir.copy()
+        self.camera_fov = 60.0
+        self.camera_fov_step = 5.0
+        self.camera_pan_step = 1.0
+        self._init_key_state()
 
     def _create_test_geometry(self):
 
@@ -134,19 +140,75 @@ class SceneView:
         self.roots = roots
 
         return geometry_list
+    
+    def _init_key_state(self):
+        self.ctrl_down = False
+        self.shift_down = False
+        self.alt_down = False
 
+    def _on_key(self, event):
+        KEY_ALT = 256
+        KEY_CTRL = 258
+        KEY_SHIFT = 260
+        if event.key == KEY_CTRL:
+            self.ctrl_down = event.type == gui.KeyEvent.DOWN
+            return True
+        if event.key == KEY_ALT:
+            self.alt_down = event.type == gui.KeyEvent.DOWN
+            return True
+        if event.key == KEY_SHIFT:
+            self.shift_down = event.type == gui.KeyEvent.DOWN
+            return True
+
+        if event.type != gui.KeyEvent.DOWN:
+            return False
+        
+        if self.ctrl_down:
+            if event.key == gui.KeyName.LEFT:
+                self.on_camera_roll(+5.0)   # CCW
+            if event.key == gui.KeyName.RIGHT:
+                self.on_camera_roll(-5.0)   # CW
+            if event.key == gui.KeyName.UP:
+                self.set_camera_fov(self.camera_fov - self.camera_fov_step)
+            if event.key == gui.KeyName.DOWN:
+                self.set_camera_fov(self.camera_fov + self.camera_fov_step)
+            return True
+        
+        if event.key == gui.KeyName.LEFT:
+            self.on_camera_pan(1, 0)
+            return True
+
+        if event.key == gui.KeyName.RIGHT:
+            self.on_camera_pan(-1, 0)
+            return True
+
+        if event.key == gui.KeyName.UP:
+            self.on_camera_pan(0, -1)
+            return True
+
+        if event.key == gui.KeyName.DOWN:
+            self.on_camera_pan(0, 1)
+            return True
+
+        keymap = {
+            gui.KeyName.R: self.on_reset_camera,
+            gui.KeyName.S: self.on_save_stl,
+            gui.KeyName.L: self.on_reset_light,
+        }
+
+        action = keymap.get(event.key)
+
+        if action:
+            action()
+            return True
+
+        return False
+    
     def _on_mouse(self, event):
+        alt = event.is_modifier_down(gui.KeyModifier.ALT)
 
         if event.type == gui.MouseEvent.Type.BUTTON_DOWN: 
-            if event.is_button_down(gui.MouseButton.LEFT):
-                print(
-                    f"Left Click ({event.x}, {event.y})"
-                )
-            
-            if event.is_button_down(gui.MouseButton.MIDDLE):
-                print(
-                    f"Middle Click ({event.x}, {event.y})"
-                )
+            if event.is_button_down(gui.MouseButton.MIDDLE) or alt:
                 self.sun_dragging = True
                 self.last_mouse_x = event.x
                 self.last_mouse_y = event.y
@@ -292,3 +354,169 @@ class SceneView:
             )
 
             self.geometry_names.append(name)
+    
+    def on_reset_camera(self):
+        print("Reset Camera")
+
+        bounds = self.widget.scene.bounding_box
+
+        self.widget.setup_camera(
+            60.0,
+            bounds,
+            bounds.get_center()
+        )
+
+    def on_save_stl(self):
+        print("Save STL")
+        self.export_current_model()
+
+
+    def export_current_model(self):
+        merged = o3d.geometry.TriangleMesh()
+
+        for root in self.roots:
+            self._collect_meshes_for_export(root, merged)
+
+        if len(merged.vertices) == 0:
+            print("No mesh found")
+            return
+
+        merged.compute_vertex_normals()
+
+        filename = "export.stl"
+
+        ok = o3d.io.write_triangle_mesh(
+            filename,
+            merged,
+            write_ascii=False
+        )
+
+        if ok:
+            print(f"Saved: {filename}")
+        else:
+            print("Save failed")
+
+
+    def _collect_meshes_for_export(self, node, merged):
+        for mesh in node.meshes:
+            mesh_copy = copy.deepcopy(mesh)
+            mesh_copy.transform(node.world_T)
+            merged += mesh_copy
+
+        for child in node.children:
+            self._collect_meshes_for_export(child, merged)
+
+    def on_reset_light(self):
+        print("Reset Light")
+
+        self.cur_sun_dir = self.default_sun_dir.copy()
+        self.realtime_sun_dir = self.default_sun_dir.copy()
+
+        self.widget.scene.scene.set_sun_light(
+            self.cur_sun_dir,
+            [1.0, 1.0, 1.0],
+            100000
+        )
+        self.widget.scene.scene.enable_sun_light(True)
+        self.widget.force_redraw()
+
+    def on_camera_roll(self, angle_deg):
+        camera = self.widget.scene.camera
+
+        # camera-to-world 行列
+        model = np.asarray(camera.get_model_matrix())
+
+        # 現在のカメラ姿勢
+        eye = model[:3, 3]
+        right = model[:3, 0]
+        up = model[:3, 1]
+        backward = model[:3, 2]
+
+        forward = -backward
+
+        # 回転中心は SceneWidget の現在の回転中心を使う
+        center = np.asarray(self.widget.center_of_rotation)
+
+        angle = math.radians(angle_deg)
+
+        # up/right を視線方向 forward まわりに回す
+        up2 = self._rotate_vector(up, forward, angle)
+
+        self.widget.look_at(center, eye, up2)
+        self.widget.force_redraw()
+
+
+    def _rotate_vector(self, v, axis, angle):
+        axis = axis / np.linalg.norm(axis)
+
+        return (
+            v * math.cos(angle)
+            + np.cross(axis, v) * math.sin(angle)
+            + axis * np.dot(axis, v) * (1.0 - math.cos(angle))
+        )
+    
+    def set_camera_fov(self, fov_deg):
+        camera = self.widget.scene.camera
+
+        model = np.asarray(camera.get_model_matrix())
+
+        eye = model[:3, 3]
+        up = model[:3, 1]
+        center = np.asarray(self.widget.center_of_rotation)
+
+        old_fov = self.camera_fov
+        new_fov = max(5.0, min(90.0, float(fov_deg)))
+
+        view_vec = eye - center
+        old_dist = np.linalg.norm(view_vec)
+
+        if old_dist <= 1e-9:
+            return
+
+        view_dir = view_vec / old_dist
+
+        old_rad = math.radians(old_fov)
+        new_rad = math.radians(new_fov)
+
+        # 画面上の見かけサイズを維持するための距離補正
+        new_dist = old_dist * math.tan(old_rad / 2.0) / math.tan(new_rad / 2.0)
+
+        new_eye = center + view_dir * new_dist
+
+        self.camera_fov = new_fov
+
+        bounds = self.widget.scene.bounding_box
+
+        self.widget.setup_camera(
+            self.camera_fov,
+            bounds,
+            center
+        )
+
+        self.widget.look_at(center, new_eye, up)
+        self.widget.force_redraw()
+
+        print(f"Camera FOV: {self.camera_fov:.1f}, distance: {new_dist:.1f}")
+    
+    def on_camera_pan(self, dx, dy):
+        camera = self.widget.scene.camera
+
+        model = np.asarray(camera.get_model_matrix())
+
+        eye = model[:3, 3]
+        right = model[:3, 0]
+        up = model[:3, 1]
+
+        center = np.asarray(self.widget.center_of_rotation)
+
+        pan_step = self.camera_pan_step
+
+        move = right * dx * pan_step + up * dy * pan_step
+
+        new_eye = eye + move
+        new_center = center + move
+
+        self.widget.look_at(new_center, new_eye, up)
+        self.widget.center_of_rotation = new_center
+
+        self.widget.force_redraw()
