@@ -1,6 +1,6 @@
 import os
 import colorsys
-
+import copy
 import numpy as np
 import open3d as o3d
 
@@ -293,3 +293,22 @@ def collect_all_joint_info(roots):
         collect_joint_info(root, result)
 
     return result
+
+def collect_export_meshes(roots):
+    merged = o3d.geometry.TriangleMesh()
+
+    all_meshes = []
+
+    for root in roots:
+        collect_meshes(root, all_meshes)
+
+    for mesh, world_T in all_meshes:
+        # HIDE_T のメッシュは出力しない
+        if np.allclose(world_T, HIDE_T):
+            continue
+
+        mesh_copy = copy.deepcopy(mesh)
+        mesh_copy.transform(world_T)
+        merged += mesh_copy
+
+    return merged
