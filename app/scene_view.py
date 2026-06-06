@@ -1,12 +1,14 @@
 import copy
 import json
 from pathlib import Path
+from unittest import case
 import numpy as np
 import math
 
 import open3d as o3d
 import open3d.visualization.gui as gui # type: ignore
-import open3d.visualization.rendering as rendering # type: ignore
+import open3d.visualization.rendering as rendering
+from wcwidth import center # type: ignore
 
 from core.model_builder import build_geometry_list_from_model_json, collect_export_meshes
 
@@ -51,8 +53,15 @@ class SceneView:
         self.default_sun_dir = self.cur_sun_dir.copy()
         self.camera_fov = 60.0
         self.camera_fov_step = 5.0
-        self.camera_pan_step = 1.0
+        self.camera_pan_step = 0.5
         self._init_key_state()
+
+        self.axis_geometry_names = []
+        self.axis_material = rendering.MaterialRecord()
+        self.axis_material.shader = "unlitLine"
+        self.axis_material.line_width = 1.0
+
+        self.show_axis = False
 
     def _create_test_geometry(self):
 
@@ -168,6 +177,7 @@ class SceneView:
             return False
         
         ctrlkeymap = {
+            gui.KeyName.A: self.switch_show_joint_axes,
             gui.KeyName.C: self.on_reset_camera,
             gui.KeyName.S: self.on_save_stl,
             gui.KeyName.L: self.on_reset_light,
@@ -349,21 +359,23 @@ class SceneView:
             )
 
         for i, (mesh, world_T) in enumerate(geometry_list):
-
             m = o3d.geometry.TriangleMesh(mesh)
-
             m.transform(world_T)
             m.compute_triangle_normals()
 
             name = f"model_{i}"
-
             self.widget.scene.add_geometry(
                 name,
                 m,
                 self.material
             )
-
             self.geometry_names.append(name)
+
+        if self.show_axis:
+            self.show_joint_axes()
+        else:
+            self.clear_joint_axes()
+
     
     def on_reset_camera(self):
         print("Reset Camera")
@@ -588,3 +600,206 @@ class SceneView:
 
         self.widget.look_at(center, new_eye, up)
         self.widget.force_redraw()
+    
+    def iter_joint_nodes(self):
+        def walk(node):
+            if getattr(node, "joint", None) is not None:
+                yield node
+
+            for child in getattr(node, "children", []):
+                yield from walk(child)
+
+        for root in self.roots:
+            yield from walk(root)
+    
+    def switch_show_joint_axes(self):
+        self.show_axis = not self.show_axis
+
+        if self.show_axis:
+            self.show_joint_axes()
+        else:
+            self.clear_joint_axes()
+
+    def show_joint_axes(self):
+        self.clear_joint_axes()
+
+        bbox = self.get_scene_bbox()
+
+        for node in self.iter_joint_nodes():
+            joint = node.joint
+
+            origin, direction = self.get_joint_axis_info(node, joint)
+
+            if origin is None or direction is None:
+                continue
+
+            color = self.get_joint_axis_color(joint)
+
+            match joint.type:
+                case "rotate":
+                    self.create_axis_line(
+                        name=f"joint_axis_{node.name}",
+                        origin=origin,
+                        direction=direction,
+                        bbox=bbox,
+                        color=color,
+                    )
+
+                case "linear":
+                    self.create_axis_line(
+                        name=f"joint_axis_{node.name}_plus",
+                        origin=node.world_T[:3, 3],
+                        direction=direction,
+                        bbox=bbox,
+                        color=color,
+                        type="plusonly",
+                    )
+                    self.create_axis_line(
+                        name=f"joint_axis_{node.name}_minus",
+                        origin=node.world_T[:3, 3],
+                        direction=direction,
+                        bbox=bbox,
+                        color=[1.0 - c for c in color],
+                        type="minusonly",
+                    )
+                case "signal":
+                    continue
+                case _:
+                    continue            
+
+    def clear_joint_axes(self):
+        if not hasattr(self, "axis_geometry_names"):
+            self.axis_geometry_names = []
+
+        for name in self.axis_geometry_names:
+            if self.widget.scene.scene.has_geometry(name):
+                self.widget.scene.scene.remove_geometry(name)
+
+        self.axis_geometry_names.clear()
+    
+    def get_joint_axis_info(self, node, joint):
+        # 1. 軸方向を取得
+        axis = getattr(joint, "axis", None)
+        type = getattr(joint, "type", None)
+        pivot = getattr(joint, "pivot", np.array([0.0, 0.0, 0.0]))
+
+        if axis is None:
+            local_axis = np.array([0.0, 0.0, 1.0])
+        else:
+            local_axis = np.asarray(axis, dtype=float)
+
+        norm = np.linalg.norm(local_axis)
+        if norm < 1e-9:
+            return None, None
+
+        local_axis = local_axis / norm
+
+        world_direction = node.world_T[:3, :3] @ local_axis
+
+        norm = np.linalg.norm(world_direction)
+        if norm < 1e-9:
+            return None, None
+
+        world_direction = world_direction / norm
+
+        if type == "rotate":
+            world_origin = node.world_T[:3, 3] + node.world_T[:3, :3] @ pivot
+        else:
+            world_origin = node.world_T[:3, 3]
+
+        return world_origin, world_direction
+    
+    def get_joint_axis_color(self, joint):
+        joint_type = getattr(joint, "type", "")
+
+        if joint_type == "linear":
+            return (0.2, 0.8, 1.0)   # 水色
+        if joint_type == "rotate":
+            return (1.0, 0.8, 0.1)   # 黄色
+
+        return (0.8, 0.8, 0.8)       # その他
+    
+    def create_axis_line(self, origin, direction, bbox, color=(1, 0, 0), type="infinite", name=None):
+        origin = np.asarray(origin, dtype=float)
+        direction = np.asarray(direction, dtype=float)
+
+        min_bound = bbox.min_bound
+        max_bound = bbox.max_bound
+
+        t_values = []
+
+        for i in range(3):
+            if abs(direction[i]) < 1e-9:
+                continue
+
+            t1 = (min_bound[i] - origin[i]) / direction[i]
+            t2 = (max_bound[i] - origin[i]) / direction[i]
+            t_values.extend([t1, t2])
+
+        points = []
+
+        for t in t_values:
+            p = origin + direction * t
+
+            if np.all(p >= min_bound - 1e-6) and np.all(
+                p <= max_bound + 1e-6
+            ):
+                points.append((t, p))
+
+        if len(points) < 2:
+            return None
+
+        points.sort(key=lambda x: x[0])
+
+        if type == "infinite":
+            p1 = points[0][1]
+            p2 = points[-1][1]
+        elif type == "plusonly":
+            p1 = origin
+            p2 = points[-1][1]
+        elif type == "minusonly":
+            p1 = origin
+            p2 = points[0][1]
+
+        line = o3d.geometry.LineSet()
+        line.points = o3d.utility.Vector3dVector([p1, p2])
+        line.lines = o3d.utility.Vector2iVector([[0, 1]])
+        line.colors = o3d.utility.Vector3dVector([color])
+        
+        self.widget.scene.scene.add_geometry(
+            name,
+            line,
+            self.axis_material,
+        )
+
+        self.axis_geometry_names.append(name)
+
+    def get_scene_bbox(self):
+        bboxes = []
+
+        for root in self.roots:
+            self._collect_bboxes(root, bboxes)
+
+        if not bboxes:
+            return o3d.geometry.AxisAlignedBoundingBox(
+                min_bound=[-50, -50, -50],
+                max_bound=[50, 50, 50],
+            )
+
+        bbox = bboxes[0]
+        for b in bboxes[1:]:
+            bbox += b
+
+        return bbox
+
+    def _collect_bboxes(self, node, bboxes):
+        for mesh in node.meshes:
+            mesh_world = copy.deepcopy(mesh)
+            mesh_world.transform(node.world_T)
+
+            bboxes.append(
+                mesh_world.get_axis_aligned_bounding_box()
+            )
+
+        for child in node.children:
+            self._collect_bboxes(child, bboxes)
