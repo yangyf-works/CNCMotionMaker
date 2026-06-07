@@ -56,7 +56,9 @@ def parse_joint(joint_def):
         pivot=joint_def.get("pivot", [0, 0, 0]),
         path=joint_def.get("path"),
         axisno=joint_def.get("axisno"),
-        signal=joint_def.get("signal", "")
+        signal=joint_def.get("signal", ""),
+        sprockets=joint_def.get("sprockets", []),
+        loop=joint_def.get("loop", False),
     )
 
 

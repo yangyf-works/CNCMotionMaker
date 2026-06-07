@@ -7,11 +7,14 @@ import math
 
 import open3d as o3d
 import open3d.visualization.gui as gui # type: ignore
-import open3d.visualization.rendering as rendering
+import open3d.visualization.rendering as rendering # type: ignore
 from wcwidth import center # type: ignore
 
 from core.model_builder import build_geometry_list_from_model_json, collect_export_meshes
-
+from core.chain_utils import (
+    build_chain_points_from_sprockets,
+    point_on_chain,
+)
 import traceback
 
 class SceneView:
@@ -99,49 +102,39 @@ class SceneView:
             with open(json_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
-            geometries = self._build_model_from_json(
+            self._build_model_from_json(
                 data,
                 json_path
             )
+            self.apply_initial_joint_motions()
+            self.refresh_model()
 
-            if not geometries:
-                print("表示できるgeometryがありません")
-                return
-
-            merged_bbox = None
-
-            for i, geom in enumerate(geometries):
-
-                name = f"model_{i}"
-
-                self.widget.scene.add_geometry(
-                    name,
-                    geom,
-                    self.material
-                )
-
-                self.geometry_names.append(name)
-
-                bbox = geom.get_axis_aligned_bounding_box()
-
-                if merged_bbox is None:
-                    merged_bbox = bbox
-                else:
-                    merged_bbox += bbox
-
-            self.widget.setup_camera(
-                60,
-                merged_bbox,
-                merged_bbox.get_center()
-            )
+            self.reset_camera_to_model()
 
             print("Model loaded:", json_path.name)
 
         except Exception:
             traceback.print_exc()
-        
-    def _build_model_from_json(self, data, json_path):
+            
+    def apply_initial_joint_motions(self):
+        for node in self.iter_joint_nodes():
+            joint = node.joint
 
+            if joint is None:
+                continue
+
+            if joint.type == "chain":
+                self.apply_chain_joint_motion(node)
+    def reset_camera_to_model(self):
+        bbox = self.get_scene_bbox()
+
+        self.widget.setup_camera(
+            60,
+            bbox,
+            bbox.get_center()
+        )
+
+    def _build_model_from_json(self, data, json_path):
         roots, geometry_list = build_geometry_list_from_model_json(
             data,
             str(json_path.parent)
@@ -317,21 +310,19 @@ class SceneView:
             [z*x*C - y*s,   z*y*C + x*s, c + z*z*C],
         ])
     
-    def move_joint(self, node, direction):
+    def move_joint(self, node, amount):
         if node.joint.type == "rotate":
-
-            node.joint_value += (
-                direction * 1.0
-            )
+            node.joint_value += amount * 1.0
 
         elif node.joint.type == "linear":
+            node.joint_value += amount * 1.0
 
-            node.joint_value += (
-                direction * 1.0
-            )
+        elif node.joint.type == "chain":
+            node.joint_value += amount
+            self.apply_chain_joint_motion(node)
         
         elif node.joint.type == "signal":
-            node.joint_value = 1 if direction > 0 else 0
+            node.joint_value = 1 if amount > 0 else 0
 
         gui.Application.instance.post_to_main_thread(
             self.window,
@@ -662,6 +653,8 @@ class SceneView:
                         color=[1.0 - c for c in color],
                         type="minusonly",
                     )
+                case "chain":
+                    self.draw_chain_axis(node)
                 case "signal":
                     continue
                 case _:
@@ -678,7 +671,7 @@ class SceneView:
         self.axis_geometry_names.clear()
     
     def get_joint_axis_info(self, node, joint):
-        # 1. 軸方向を取得
+        # 軸方向を取得
         axis = getattr(joint, "axis", None)
         type = getattr(joint, "type", None)
         pivot = getattr(joint, "pivot", np.array([0.0, 0.0, 0.0]))
@@ -803,3 +796,116 @@ class SceneView:
 
         for child in node.children:
             self._collect_bboxes(child, bboxes)
+
+    def create_chain_axis_lineset(self, points, loop=True, color=(1.0, 0.6, 0.0)):
+        if points is None or len(points) < 2:
+            return None
+
+        lines = []
+
+        for i in range(len(points) - 1):
+            lines.append([i, i + 1])
+
+        if loop:
+            lines.append([len(points) - 1, 0])
+
+        line_set = o3d.geometry.LineSet()
+        line_set.points = o3d.utility.Vector3dVector(points)
+        line_set.lines = o3d.utility.Vector2iVector(lines)
+        line_set.colors = o3d.utility.Vector3dVector(
+            [color for _ in lines]
+        )
+
+        return line_set
+    
+    def draw_chain_axis(self, node):
+        joint = node.joint
+
+        if joint is None:
+            return
+
+        if joint.type != "chain":
+            return
+
+        if not joint.sprockets:
+            return
+
+        points = build_chain_points_from_sprockets(
+            joint.sprockets,
+            loop=joint.loop,
+            arc_step_deg=5.0,
+        )
+
+        line_set = self.create_chain_axis_lineset(
+            points,
+            loop=joint.loop,
+            color=(1.0, 0.6, 0.0),
+        )
+
+        if line_set is None:
+            return
+
+        parent_T = self.get_parent_world_T(node)
+        line_set.transform(parent_T)
+
+        geom_name = f"axis_chain_{joint.name or node.name}"
+
+        self.widget.scene.scene.remove_geometry(geom_name)
+        self.widget.scene.scene.add_geometry(
+            geom_name,
+            line_set,
+            self.axis_material,
+        )
+        self.axis_geometry_names.append(geom_name)
+
+    def apply_chain_joint_motion(self, node):
+        joint = node.joint
+
+        if joint is None:
+            return
+
+        if joint.type != "chain":
+            return
+
+        if not joint.sprockets:
+            return
+
+        points = build_chain_points_from_sprockets(
+            joint.sprockets,
+            loop=joint.loop,
+            arc_step_deg=5.0,
+        )
+
+        pos = point_on_chain(
+            points,
+            node.joint_value,
+            loop=joint.loop,
+        )
+
+        if pos is None:
+            return
+
+        T = np.eye(4)
+        T[:3, 3] = pos
+
+        node.local_T = T
+    
+    def get_parent_world_T(self, node):
+        for root in self.roots:
+            parent = self._find_parent(root, node)
+            if parent is not None:
+                return parent.world_T
+
+        return np.eye(4)
+
+
+    def _find_parent(self, current, target):
+        for child in getattr(current, "children", []):
+            if child is target:
+                return current
+
+            found = self._find_parent(child, target)
+            if found is not None:
+                return found
+
+        return None
