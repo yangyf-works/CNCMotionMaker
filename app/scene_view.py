@@ -14,7 +14,9 @@ from core.model_builder import build_geometry_list_from_model_json, collect_expo
 from core.chain_utils import (
     build_chain_points_from_sprockets,
     point_on_chain,
+    get_carrier_positions,
 )
+
 import traceback
 
 class SceneView:
@@ -56,7 +58,7 @@ class SceneView:
         self.default_sun_dir = self.cur_sun_dir.copy()
         self.camera_fov = 60.0
         self.camera_fov_step = 5.0
-        self.camera_pan_step = 0.5
+        self.camera_pan_step = 10.0
         self._init_key_state()
 
         self.axis_geometry_names = []
@@ -108,7 +110,6 @@ class SceneView:
             )
             self.apply_initial_joint_motions()
             self.refresh_model()
-
             self.reset_camera_to_model()
 
             print("Model loaded:", json_path.name)
@@ -319,8 +320,7 @@ class SceneView:
 
         elif node.joint.type == "chain":
             node.joint_value += amount
-            self.apply_chain_joint_motion(node)
-        
+
         elif node.joint.type == "signal":
             node.joint_value = 1 if amount > 0 else 0
 
@@ -493,26 +493,61 @@ class SceneView:
         print(f"Camera FOV: {self.camera_fov:.1f}, distance: {new_dist:.1f}")
     
     def on_camera_pan(self, dx, dy):
+        dx_px = -dx * self.camera_pan_step
+        dy_px = dy * self.camera_pan_step
         camera = self.widget.scene.camera
 
         model = np.asarray(camera.get_model_matrix())
 
         eye = model[:3, 3]
-        right = model[:3, 0]
         up = model[:3, 1]
-
         center = np.asarray(self.widget.center_of_rotation)
 
-        pan_step = self.camera_pan_step
+        view_vec = center - eye
+        dist = np.linalg.norm(view_vec)
 
-        move = right * dx * pan_step + up * dy * pan_step
+        if dist <= 1e-9:
+            return
+
+        forward = view_vec / dist
+
+        up_norm = np.linalg.norm(up)
+        if up_norm <= 1e-9:
+            return
+
+        up = up / up_norm
+
+        # カメラの右方向
+        right = np.cross(forward, up)
+        right_norm = np.linalg.norm(right)
+
+        if right_norm <= 1e-9:
+            return
+
+        right = right / right_norm
+
+        height = self.widget.frame.height
+        if height <= 0:
+            return
+
+        fov_rad = math.radians(self.camera_fov)
+
+        # centerまでの距離で、画面1pxがワールドで何mm相当か計算
+        view_height_world = 2.0 * dist * math.tan(fov_rad / 2.0)
+        world_per_pixel = view_height_world / height
+
+        move = (
+            -right * dx_px * world_per_pixel
+            + up * dy_px * world_per_pixel
+        )
 
         new_eye = eye + move
         new_center = center + move
 
-        self.widget.look_at(new_center, new_eye, up)
+        # center_of_rotation も更新する
         self.widget.center_of_rotation = new_center
 
+        self.widget.look_at(new_center, new_eye, up)
         self.widget.force_redraw()
     
     def on_camera_orbit(self, yaw_deg=0.0, pitch_deg=0.0):
@@ -655,6 +690,8 @@ class SceneView:
                     )
                 case "chain":
                     self.draw_chain_axis(node)
+                    #self.show_chain_carriers(node)
+
                 case "signal":
                     continue
                 case _:
@@ -909,3 +946,34 @@ class SceneView:
                 return found
 
         return None
+    
+    def show_chain_carriers(self, node):
+        joint = node.joint
+
+        if not joint.carriers:
+            return
+
+        positions = get_carrier_positions(
+            joint.sprockets,
+            joint.carriers,
+            chain_offset=node.joint_value,
+            loop=joint.loop,
+        )
+
+        for i, pos in enumerate(positions):
+
+            sphere = o3d.geometry.TriangleMesh.create_sphere(
+                radius=0.5
+            )
+
+            sphere.translate(pos)
+
+            name = f"carrier_{node.name}_{i}"
+
+            self.widget.scene.scene.add_geometry(
+                name,
+                sphere,
+                self.material,
+            )
+
+            self.axis_geometry_names.append(name)

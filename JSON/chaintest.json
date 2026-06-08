@@ -16,19 +16,21 @@
       "type": "node",
       "children": [
         {
-          "ref": "cylinder"
+          "ref": "cube"
         }
       ],
       "joint": {
         "name": "TC",
         "type": "chain",
+        "loop": true,
+        "value": 0,
 
         "sprockets": [
           {
             "name": "sprocket_1",
             "center": [0, 0, 0],
             "axis": [0, 1, 0],
-            "radius": 4,
+            "radius": 1,
             "start_angle": 90,
             "end_angle": 270
           },
@@ -36,14 +38,17 @@
             "name": "sprocket_2",
             "center": [10, 0, 0],
             "axis": [0, 1, 0],
-            "radius": 4,
+            "radius": 1,
             "start_angle": -90,
             "end_angle": 90
           }
         ],
 
-        "loop": true,
-        "value": 0
+        "carriers": {
+          "count": 1,
+          "offset": 0
+        }
+
       }
     }
     
@@ -54,7 +59,7 @@
       "ref": "chaintest",
       "transform": {
         "position": [0, 0, 0],
-        "rotation": [0, 0, 0]
+        "rotation": [0, 90, 0]
       }
     }
   ]

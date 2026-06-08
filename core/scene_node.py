@@ -2,7 +2,7 @@ import numpy as np
 
 
 class Joint:
-    def __init__(self, joint_type, name="", axis=None, pivot=None, path=None, axisno=None, signal="", sprockets=None, loop=False):
+    def __init__(self, joint_type, name="", axis=None, pivot=None, path=None, axisno=None, signal="", sprockets=None, loop=False, carriers=None):
         self.type = joint_type
         self.name = name
 
@@ -20,6 +20,7 @@ class Joint:
         # chain 用
         self.sprockets: list[dict] | None = sprockets
         self.loop: bool = loop
+        self.carriers: dict | None = carriers
 
 
 class SceneNode:

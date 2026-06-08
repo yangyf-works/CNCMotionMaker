@@ -59,6 +59,7 @@ def parse_joint(joint_def):
         signal=joint_def.get("signal", ""),
         sprockets=joint_def.get("sprockets", []),
         loop=joint_def.get("loop", False),
+        carriers=joint_def.get("carriers",{}),
     )
 
 

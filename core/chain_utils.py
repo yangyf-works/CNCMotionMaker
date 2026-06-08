@@ -204,3 +204,49 @@ def point_on_chain(points, distance, loop=True):
             return points[i] + (points[i + 1] - points[i]) * t
 
     return points[-1]
+
+def get_carrier_positions(
+    sprockets,
+    carriers,
+    chain_offset=0.0,
+    loop=True,
+):
+    if not carriers:
+        return []
+
+    points = build_chain_points_from_sprockets(
+        sprockets,
+        loop=loop,
+    )
+
+    _, _, chain_length = calc_polyline_lengths(points)
+
+    count = int(carriers.get("count", 0))
+
+    if count <= 0:
+        return []
+
+    offset = float(
+        carriers.get("offset", 0.0)
+    )
+
+    spacing = chain_length / count
+
+    result = []
+
+    for i in range(count):
+        distance = (
+            chain_offset
+            + offset
+            + i * spacing
+        )
+
+        pos = point_on_chain(
+            points,
+            distance,
+            loop=loop,
+        )
+
+        result.append(pos)
+
+    return result

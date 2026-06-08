@@ -10,14 +10,11 @@ from core.transform import (
     parse_joint,
     make_joint_transform,
 )
-
-
-HIDE_T = np.eye(4)
-HIDE_T[0, 0] = 0.00001
-HIDE_T[1, 1] = 0.00001
-HIDE_T[2, 2] = 0.00001
-HIDE_T[3, 3] = 1
-
+from core.chain_utils import (
+    build_chain_points_from_sprockets,
+    point_on_chain,
+    calc_polyline_lengths,
+)
 
 COLOR_LIST = [[0.7, 0.7, 0.7]]
 
@@ -173,15 +170,27 @@ def build_node(node_def, defs, base_dir, path="", flip_normal=False):
         if node.joint is not None and node.joint.type == "signal":
             node.joint_value = 1
 
-        for child_def in defn.get("children", []):
-            child = build_node(
-                child_def,
+        child_defs = defn.get("children", [])
+
+        if node.joint is not None and node.joint.type == "chain":
+            node.carriers = expand_chain_carriers(
+                child_defs,
+                node.joint,
                 defs,
                 base_dir,
                 current_path,
-                current_flip
+                current_flip,
             )
-            node.children.append(child)
+        else:
+            for child_def in child_defs:
+                child = build_node(
+                    child_def,
+                    defs,
+                    base_dir,
+                    current_path,
+                    current_flip
+                )
+                node.children.append(child)
 
     elif defn["type"] == "array":
         children = expand_array(
@@ -195,15 +204,25 @@ def build_node(node_def, defs, base_dir, path="", flip_normal=False):
 
     return node
 
-
 def update_world_transform(node, parent_T=np.eye(4)):
     joint_T = make_joint_transform(node.joint, node.joint_value)
 
-    node.world_T = parent_T @ node.local_T @ joint_T
+    node_base_T = parent_T @ node.local_T
+    node.world_T = node_base_T @ joint_T
+
+    if node.joint is not None and node.joint.type == "chain":
+        update_chain_carriers(node)
+
+        for carrier in getattr(node, "carriers", []):
+            update_world_transform(
+                carrier
+            )
 
     for child in node.children:
-        update_world_transform(child, node.world_T)
-
+        update_world_transform(
+            child,
+            node.world_T
+        )
 
 def paint_meshes(node, color_index=0):
     if node.joint is not None:
@@ -217,7 +236,6 @@ def paint_meshes(node, color_index=0):
     for child in node.children:
         paint_meshes(child, color_index)
 
-
 def collect_meshes(node, out_list, hidden=False):
     if (
         node.joint is not None
@@ -226,15 +244,17 @@ def collect_meshes(node, out_list, hidden=False):
     ):
         hidden = True
 
+    if hidden:
+        return
+
     for mesh in node.meshes:
-        if hidden:
-            out_list.append((mesh, HIDE_T))
-        else:
-            out_list.append((mesh, node.world_T @ node.def_T))
+        out_list.append((mesh, node.world_T @ node.def_T))
+
+    for carrier in getattr(node, "carriers", []):
+        collect_meshes(carrier, out_list, hidden)
 
     for child in node.children:
         collect_meshes(child, out_list, hidden)
-
 
 def build_geometry_list_from_model_json(data, base_dir):
     defs = data["definitions"]
@@ -303,12 +323,97 @@ def collect_export_meshes(roots):
         collect_meshes(root, all_meshes)
 
     for mesh, world_T in all_meshes:
-        # HIDE_T のメッシュは出力しない
-        if np.allclose(world_T, HIDE_T):
-            continue
-
         mesh_copy = copy.deepcopy(mesh)
         mesh_copy.transform(world_T)
         merged += mesh_copy
 
     return merged
+
+def expand_chain_carriers(child_defs, joint, defs, base_dir, path, flip_normal):
+    carriers_def = getattr(joint, "carriers", None)
+
+    if not carriers_def:
+        return []
+
+    count = int(carriers_def.get("count", 0))
+    offset = float(carriers_def.get("offset", 0.0))
+
+    if count <= 0:
+        return []
+
+    carrier_roots = []
+
+    for i in range(count):
+        group_node = SceneNode(f"{path}_carrier{i}")
+        group_node.is_chain_carrier = True
+        group_node.chain_index = i
+        group_node.chain_offset = offset
+        group_node.local_T = np.eye(4)
+        group_node.def_T = np.eye(4)
+
+        for child_def in child_defs:
+            child = build_node(
+                child_def,
+                defs,
+                base_dir,
+                f"{path}_carrier{i}",
+                flip_normal,
+            )
+            group_node.children.append(child)
+
+        carrier_roots.append(group_node)
+
+    return carrier_roots
+
+def update_chain_carriers(chain_node):
+    joint = chain_node.joint
+
+    carriers_def = getattr(joint, "carriers", None)
+    if not carriers_def:
+        return
+
+    carrier_nodes = getattr(chain_node, "carriers", [])
+    if not carrier_nodes:
+        return
+
+    points = build_chain_points_from_sprockets(
+        joint.sprockets,
+        loop=joint.loop,
+        arc_step_deg=5.0,
+    )
+
+    _, _, chain_length = calc_polyline_lengths(points)
+
+    if chain_length <= 1e-9:
+        return
+
+    count = int(carriers_def.get("count", 0))
+    offset = float(carriers_def.get("offset", 0.0))
+
+    if count <= 0:
+        return
+
+    spacing = chain_length / count
+
+    for carrier in carrier_nodes:
+        i = carrier.chain_index
+
+        distance = (
+            chain_node.joint_value
+            + offset
+            + i * spacing
+        )
+
+        pos = point_on_chain(
+            points,
+            distance,
+            loop=joint.loop,
+        )
+
+        if pos is None:
+            continue
+
+        T = np.eye(4)
+        T[:3, 3] = pos
+
+        carrier.local_T = T
