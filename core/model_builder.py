@@ -145,14 +145,11 @@ def build_node(node_def, defs, base_dir, path="", flip_normal=False):
     else:
         node.local_T = make_transform(node_def.get("transform"))
         
-    def_T = make_transform(defn.get("transform"))
-
-    det = np.linalg.det((node.local_T @ def_T)[:3, :3])
+    det = np.linalg.det((node.local_T))
     current_flip = flip_normal if det > 0 else not flip_normal
 
     if defn["type"] == "mesh":
         mesh_path = os.path.join(base_dir, defn["file"])
-
         mesh = o3d.io.read_triangle_mesh(mesh_path)
 
         if current_flip:
@@ -160,9 +157,7 @@ def build_node(node_def, defs, base_dir, path="", flip_normal=False):
             triangles[:] = triangles[:, [0, 2, 1]]
 
         mesh.compute_triangle_normals()
-
         node.meshes.append(mesh)
-        node.def_T = def_T
 
     elif defn["type"] == "node":
         node.joint = parse_joint(defn.get("joint"))
@@ -173,7 +168,7 @@ def build_node(node_def, defs, base_dir, path="", flip_normal=False):
         child_defs = defn.get("children", [])
 
         if node.joint is not None and node.joint.type == "chain":
-            node.carriers = expand_chain_carriers(
+            node.children = expand_chain_carriers(
                 child_defs,
                 node.joint,
                 defs,
@@ -207,22 +202,13 @@ def build_node(node_def, defs, base_dir, path="", flip_normal=False):
 def update_world_transform(node, parent_T=np.eye(4)):
     joint_T = make_joint_transform(node.joint, node.joint_value)
 
-    node_base_T = parent_T @ node.local_T
-    node.world_T = node_base_T @ joint_T
+    node.world_T = parent_T @ node.local_T @ joint_T
 
     if node.joint is not None and node.joint.type == "chain":
         update_chain_carriers(node)
 
-        for carrier in getattr(node, "carriers", []):
-            update_world_transform(
-                carrier
-            )
-
     for child in node.children:
-        update_world_transform(
-            child,
-            node.world_T
-        )
+        update_world_transform(child, node.world_T)
 
 def paint_meshes(node, color_index=0):
     if node.joint is not None:
@@ -248,10 +234,7 @@ def collect_meshes(node, out_list, hidden=False):
         return
 
     for mesh in node.meshes:
-        out_list.append((mesh, node.world_T @ node.def_T))
-
-    for carrier in getattr(node, "carriers", []):
-        collect_meshes(carrier, out_list, hidden)
+        out_list.append((mesh, node.world_T))
 
     for child in node.children:
         collect_meshes(child, out_list, hidden)
@@ -349,7 +332,6 @@ def expand_chain_carriers(child_defs, joint, defs, base_dir, path, flip_normal):
         group_node.chain_index = i
         group_node.chain_offset = offset
         group_node.local_T = np.eye(4)
-        group_node.def_T = np.eye(4)
 
         for child_def in child_defs:
             child = build_node(
@@ -372,7 +354,7 @@ def update_chain_carriers(chain_node):
     if not carriers_def:
         return
 
-    carrier_nodes = getattr(chain_node, "carriers", [])
+    carrier_nodes = getattr(chain_node, "children", [])
     if not carrier_nodes:
         return
 
@@ -381,7 +363,7 @@ def update_chain_carriers(chain_node):
         loop=joint.loop,
         arc_step_deg=5.0,
     )
-
+    
     _, _, chain_length = calc_polyline_lengths(points)
 
     if chain_length <= 1e-9:
@@ -404,7 +386,7 @@ def update_chain_carriers(chain_node):
             + i * spacing
         )
 
-        pos = point_on_chain(
+        pos, direction = point_on_chain(
             points,
             distance,
             loop=joint.loop,
@@ -412,8 +394,54 @@ def update_chain_carriers(chain_node):
 
         if pos is None:
             continue
-
+        
+        old_y = carrier.local_T[:3, 1]
         T = np.eye(4)
+        T[:3, :3] = make_axis_rotation(direction, old_y)
+        T[:3, 3] = pos
         T[:3, 3] = pos
 
         carrier.local_T = T
+
+def make_axis_rotation(direction, old_y):
+    x = np.asarray(direction, dtype=float)
+    n = np.linalg.norm(x)
+
+    if n < 1e-9:
+        return np.eye(3)
+
+    x = x / n
+
+    y = np.asarray(old_y, dtype=float)
+    yn = np.linalg.norm(y)
+
+    if yn < 1e-9:
+        y = np.array([0.0, 1.0, 0.0])
+    else:
+        y = y / yn
+
+    # yからx方向成分を取り除く
+    y = y - np.dot(y, x) * x
+
+    yn = np.linalg.norm(y)
+
+    if yn < 1e-9:
+        # old_y が x と平行に近い場合の逃げ
+        y = np.array([0.0, 1.0, 0.0])
+        y = y - np.dot(y, x) * x
+
+        if np.linalg.norm(y) < 1e-9:
+            y = np.array([0.0, 0.0, 1.0])
+            y = y - np.dot(y, x) * x
+
+    y = y / np.linalg.norm(y)
+
+    z = np.cross(x, y)
+    z = z / np.linalg.norm(z)
+
+    R = np.eye(3)
+    R[:, 0] = x
+    R[:, 1] = y
+    R[:, 2] = z
+
+    return R

@@ -45,21 +45,35 @@
         ],
 
         "carriers": {
-          "count": 1,
+          "count": 20,
           "offset": 0
         }
 
       }
+    },
+    "chaintestoffset": {
+      "type": "node",
+      "children": [
+        {
+          "ref": "chaintest",
+          "transform": {
+            "scale": [1.0, 0.5, 1.5],
+            "rotation": [90, 0, 0],
+            "position": [0, -0.0, 0]
+          }
+        }
+      ]
     }
     
   },
 
   "scene": [
     {
-      "ref": "chaintest",
+      "ref": "chaintestoffset",
       "transform": {
-        "position": [0, 0, 0],
-        "rotation": [0, 90, 0]
+            "scale": [1.0, 0.5, 1.5],
+        "position": [1, -2, 3],
+        "rotation": [0, 0, 0]
       }
     }
   ]

@@ -263,6 +263,18 @@
         }
 
       }
+    },
+    "chaintestoffset": {
+      "type": "node",
+      "children": [
+        {
+          "ref": "chaintest",
+          "transform": {
+            "rotation": [0, 0, 0],
+            "position": [0, -0.0, 0]
+          }
+        }
+      ]
     }
   },
 
@@ -281,7 +293,7 @@
       }
     },
     {
-      "ref": "chaintest",
+      "ref": "chaintestoffset",
       "transform": {
         "position": [0, 0, 0],
         "rotation": [0, 0, 0]

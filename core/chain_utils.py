@@ -173,20 +173,19 @@ def calc_polyline_lengths(points):
 
     return segment_lengths, cumulative_lengths, total
 
-
 def point_on_chain(points, distance, loop=True):
     if not points:
-        return None
+        return None, None
 
     points = [np.asarray(p, dtype=float) for p in points]
 
     if len(points) == 1:
-        return points[0]
+        return points[0], np.array([1.0, 0.0, 0.0])
 
     segment_lengths, cumulative_lengths, total_length = calc_polyline_lengths(points)
 
     if total_length < EPS:
-        return points[0]
+        return points[0], np.array([1.0, 0.0, 0.0])
 
     if loop:
         distance = distance % total_length
@@ -198,12 +197,20 @@ def point_on_chain(points, distance, loop=True):
 
         if distance <= start_len + seg_len:
             if seg_len < EPS:
-                return points[i]
+                return points[i], np.array([1.0, 0.0, 0.0])
+
+            direction = points[i + 1] - points[i]
+            direction = direction / np.linalg.norm(direction)
 
             t = (distance - start_len) / seg_len
-            return points[i] + (points[i + 1] - points[i]) * t
+            pos = points[i] + (points[i + 1] - points[i]) * t
 
-    return points[-1]
+            return pos, direction
+
+    direction = points[-1] - points[-2]
+    direction = direction / np.linalg.norm(direction)
+
+    return points[-1], direction
 
 def get_carrier_positions(
     sprockets,
@@ -241,7 +248,7 @@ def get_carrier_positions(
             + i * spacing
         )
 
-        pos = point_on_chain(
+        pos, _ = point_on_chain(
             points,
             distance,
             loop=loop,

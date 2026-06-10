@@ -31,7 +31,6 @@ class SceneNode:
 
         self.local_T = np.eye(4)
         self.world_T = np.eye(4)
-        self.def_T = np.eye(4)
-
+        
         self.joint = None
         self.joint_value = 0.0

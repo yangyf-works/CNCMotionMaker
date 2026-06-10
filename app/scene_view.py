@@ -13,8 +13,11 @@ from wcwidth import center # type: ignore
 from core.model_builder import build_geometry_list_from_model_json, collect_export_meshes
 from core.chain_utils import (
     build_chain_points_from_sprockets,
-    point_on_chain,
     get_carrier_positions,
+)
+from core.model_builder import (
+    update_world_transform,
+    collect_meshes,
 )
 
 import traceback
@@ -108,7 +111,6 @@ class SceneView:
                 data,
                 json_path
             )
-            self.apply_initial_joint_motions()
             self.refresh_model()
             self.reset_camera_to_model()
 
@@ -117,18 +119,9 @@ class SceneView:
         except Exception:
             traceback.print_exc()
             
-    def apply_initial_joint_motions(self):
-        for node in self.iter_joint_nodes():
-            joint = node.joint
-
-            if joint is None:
-                continue
-
-            if joint.type == "chain":
-                self.apply_chain_joint_motion(node)
     def reset_camera_to_model(self):
         bbox = self.get_scene_bbox()
-
+        
         self.widget.setup_camera(
             60,
             bbox,
@@ -330,12 +323,6 @@ class SceneView:
         )
     
     def refresh_model(self):
-
-        from core.model_builder import (
-            update_world_transform,
-            collect_meshes,
-        )
-
         for root in self.roots:
             update_world_transform(root)
 
@@ -689,7 +676,7 @@ class SceneView:
                         type="minusonly",
                     )
                 case "chain":
-                    self.draw_chain_axis(node)
+                    self.draw_chain_axis(node, color)
                     #self.show_chain_carriers(node)
 
                 case "signal":
@@ -746,6 +733,8 @@ class SceneView:
             return (0.2, 0.8, 1.0)   # 水色
         if joint_type == "rotate":
             return (1.0, 0.8, 0.1)   # 黄色
+        if joint_type == "chain":
+            return (0.2, 0.8, 0.1)   # 緑
 
         return (0.8, 0.8, 0.8)       # その他
     
@@ -833,7 +822,7 @@ class SceneView:
 
         for child in node.children:
             self._collect_bboxes(child, bboxes)
-
+            
     def create_chain_axis_lineset(self, points, loop=True, color=(1.0, 0.6, 0.0)):
         if points is None or len(points) < 2:
             return None
@@ -855,16 +844,10 @@ class SceneView:
 
         return line_set
     
-    def draw_chain_axis(self, node):
+    def draw_chain_axis(self, node, color):
         joint = node.joint
 
-        if joint is None:
-            return
-
-        if joint.type != "chain":
-            return
-
-        if not joint.sprockets:
+        if joint is None or joint.type != "chain" or not joint.sprockets:
             return
 
         points = build_chain_points_from_sprockets(
@@ -876,14 +859,13 @@ class SceneView:
         line_set = self.create_chain_axis_lineset(
             points,
             loop=joint.loop,
-            color=(1.0, 0.6, 0.0),
+            color=color,
         )
 
         if line_set is None:
             return
 
-        parent_T = self.get_parent_world_T(node)
-        line_set.transform(parent_T)
+        line_set.transform(node.world_T)
 
         geom_name = f"axis_chain_{joint.name or node.name}"
 
@@ -894,58 +876,6 @@ class SceneView:
             self.axis_material,
         )
         self.axis_geometry_names.append(geom_name)
-
-    def apply_chain_joint_motion(self, node):
-        joint = node.joint
-
-        if joint is None:
-            return
-
-        if joint.type != "chain":
-            return
-
-        if not joint.sprockets:
-            return
-
-        points = build_chain_points_from_sprockets(
-            joint.sprockets,
-            loop=joint.loop,
-            arc_step_deg=5.0,
-        )
-
-        pos = point_on_chain(
-            points,
-            node.joint_value,
-            loop=joint.loop,
-        )
-
-        if pos is None:
-            return
-
-        T = np.eye(4)
-        T[:3, 3] = pos
-
-        node.local_T = T
-    
-    def get_parent_world_T(self, node):
-        for root in self.roots:
-            parent = self._find_parent(root, node)
-            if parent is not None:
-                return parent.world_T
-
-        return np.eye(4)
-
-
-    def _find_parent(self, current, target):
-        for child in getattr(current, "children", []):
-            if child is target:
-                return current
-
-            found = self._find_parent(child, target)
-            if found is not None:
-                return found
-
-        return None
     
     def show_chain_carriers(self, node):
         joint = node.joint

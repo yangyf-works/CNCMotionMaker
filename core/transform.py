@@ -2,7 +2,6 @@ import numpy as np
 
 from core.scene_node import Joint
 
-
 def make_transform(transform_def):
     T = np.eye(4)
 
@@ -64,7 +63,7 @@ def parse_joint(joint_def):
 
 
 def make_joint_transform(joint, value):
-    if joint is None:
+    if joint is None or joint.type == "chain" :
         return np.eye(4)
 
     if joint.type == "signal":
@@ -98,5 +97,5 @@ def make_joint_transform(joint, value):
         T2[:3, 3] = pivot
 
         return T2 @ R @ T1
-
+    
     return np.eye(4)
