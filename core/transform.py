@@ -12,6 +12,8 @@ def make_transform(transform_def):
     T[:3, 3] = pos
 
     scale = transform_def.get("scale", [1, 1, 1])
+    if np.isscalar(scale):
+        scale = [float(scale)] * 3
     S = np.eye(4)
     S[0, 0] = scale[0]
     S[1, 1] = scale[1]
@@ -51,6 +53,7 @@ def parse_joint(joint_def):
     return Joint(
         joint_type=joint_def["type"],
         name=joint_def.get("name"),
+        initial_value=joint_def.get("initial_value",0),
         axis=joint_def.get("axis"),
         pivot=joint_def.get("pivot", [0, 0, 0]),
         path=joint_def.get("path"),

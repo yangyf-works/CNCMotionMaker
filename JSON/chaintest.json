@@ -45,7 +45,7 @@
         ],
 
         "carriers": {
-          "count": 20,
+          "count": 15,
           "offset": 0
         }
 
@@ -57,7 +57,6 @@
         {
           "ref": "chaintest",
           "transform": {
-            "scale": [1.0, 0.5, 1.5],
             "rotation": [90, 0, 0],
             "position": [0, -0.0, 0]
           }
@@ -71,7 +70,6 @@
     {
       "ref": "chaintestoffset",
       "transform": {
-            "scale": [1.0, 0.5, 1.5],
         "position": [1, -2, 3],
         "rotation": [0, 0, 0]
       }

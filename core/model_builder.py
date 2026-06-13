@@ -139,6 +139,14 @@ def build_node(node_def, defs, base_dir, path="", flip_normal=False):
     current_path = f"{path}.{ref}" if path else ref
 
     node = SceneNode(current_path)
+    show_when = node_def.get("show_when", None)
+    if isinstance(show_when, str):
+        s = show_when.strip().lower()
+        if s in ("ON", "On", "on", "1", "true"):
+            show_when = True
+        elif s in ("OFF", "Off", "off", "0", "false"):
+            show_when = False
+    node.show_when = show_when
 
     if "_local_T" in node_def:
         node.local_T = node_def["_local_T"]
@@ -162,8 +170,8 @@ def build_node(node_def, defs, base_dir, path="", flip_normal=False):
     elif defn["type"] == "node":
         node.joint = parse_joint(defn.get("joint"))
 
-        if node.joint is not None and node.joint.type == "signal":
-            node.joint_value = 1
+        if node.joint is not None :
+            node.joint_value = node.joint.initial_value
 
         child_defs = defn.get("children", [])
 
@@ -223,13 +231,6 @@ def paint_meshes(node, color_index=0):
         paint_meshes(child, color_index)
 
 def collect_meshes(node, out_list, hidden=False):
-    if (
-        node.joint is not None
-        and node.joint.type == "signal"
-        and node.joint_value == 0
-    ):
-        hidden = True
-
     if hidden:
         return
 
@@ -237,7 +238,15 @@ def collect_meshes(node, out_list, hidden=False):
         out_list.append((mesh, node.world_T))
 
     for child in node.children:
-        collect_meshes(child, out_list, hidden)
+        child_hidden = hidden
+
+        if (node.joint is not None and node.joint.type == "signal"):
+            signal_on = bool(node.joint_value)
+
+            if child.show_when is not None:
+                child_hidden = (child.show_when != signal_on)
+
+        collect_meshes(child, out_list, child_hidden)
 
 def build_geometry_list_from_model_json(data, base_dir):
     defs = data["definitions"]
@@ -394,7 +403,7 @@ def update_chain_carriers(chain_node):
 
         if pos is None:
             continue
-        
+
         old_y = carrier.local_T[:3, 1]
         T = np.eye(4)
         T[:3, :3] = make_axis_rotation(direction, old_y)

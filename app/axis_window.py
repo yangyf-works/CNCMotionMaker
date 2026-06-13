@@ -91,51 +91,91 @@ class AxisControlWindow:
         # 固定行を事前作成
         #
         self.axis_rows = []
+                
+        gui.Application.instance.post_to_main_thread(
+            self.window,
+            self._initial_refresh
+        )
 
-        for _ in range(10):
+    def _initial_refresh(self):
+        self.window.set_needs_layout()
 
-            axis_row = gui.Horiz(5)
+    def _create_axis_row(self):
+        axis_row = gui.Horiz(5)
 
-            name_label = gui.Label("")
+        name_label = gui.Label("")
+        
+        value_edit = gui.TextEdit()
+        value_edit.enabled = True
+        value_edit.text_value = self._value_format(0)
 
-            value_edit = gui.TextEdit()
-            value_edit.enabled = False
-            value_edit.text_value = "0.000"
+        minus_btn = gui.Button("-")
+        plus_btn = gui.Button("+")
+        minus_btn.horizontal_padding_em = 0.2
+        minus_btn.vertical_padding_em = 0.1
+        plus_btn.horizontal_padding_em = 0.2
+        plus_btn.vertical_padding_em = 0.1
 
-            minus_btn = gui.Button("-")
-            plus_btn = gui.Button("+")
+        signal_check = gui.Checkbox("")
+        signal_check.visible = False
 
-            minus_btn.horizontal_padding_em = 0.8
-            plus_btn.horizontal_padding_em = 0.8
-            minus_btn.horizontal_padding_em = 0.2
-            minus_btn.vertical_padding_em = 0.1
+        row_dict = {
+            "row": axis_row,
+            "label": name_label,
+            "value": value_edit,
+            "check": signal_check,
+            "minus": minus_btn,
+            "plus": plus_btn,
+            "joint": None,
+        }
 
-            plus_btn.horizontal_padding_em = 0.2
-            plus_btn.vertical_padding_em = 0.1
+        value_edit.set_on_value_changed(
+            lambda text, row=row_dict:
+                self._apply_value_text(row, text)
+        )
 
-            signal_check = gui.Checkbox("")
-            signal_check.visible = False
+        axis_row.add_child(name_label)
+        axis_row.add_stretch()
+        axis_row.add_child(value_edit)
+        axis_row.add_child(signal_check)
+        axis_row.add_child(minus_btn)
+        axis_row.add_child(plus_btn)
 
-            axis_row.add_child(name_label)
-            axis_row.add_stretch()
-            axis_row.add_child(value_edit)
-            axis_row.add_child(signal_check)
-            axis_row.add_child(minus_btn)
-            axis_row.add_child(plus_btn)
+        axis_row.visible = False
 
-            axis_row.visible = False
+        self.layout.add_child(axis_row)
 
-            self.layout.add_child(axis_row)
+        self.axis_rows.append(row_dict)
 
-            self.axis_rows.append({
-                "row": axis_row,
-                "label": name_label,
-                "value": value_edit,
-                "check": signal_check,
-                "minus": minus_btn,
-                "plus": plus_btn,
-                "joint": None,
-            })
+    def _apply_value_text(self, row, text):
+        if self._setting_axis_info:
+            return
+
+        joint = row["joint"]
+
+        if joint is None:
+            return
+
+        try:
+            target_value = float(text.strip())
+        except ValueError:
+            current_value = joint["node"].joint_value
+            row["value"].text_value = self._value_format(current_value)
+            self._refresh()
+            return
+
+        current_value = joint["node"].joint_value
+        amount = target_value - current_value
+
+        self.on_joint_move(
+            joint,
+            amount
+        )
+
+        current_value = joint["node"].joint_value
+        row["value"].text_value = self._value_format(current_value)
+
+        self._refresh()
 
     def _on_layout(self, layout_context):
 
@@ -178,9 +218,10 @@ class AxisControlWindow:
         )
 
     def set_axis_info(self, joint_info_list):
-
+        while len(self.axis_rows) < len(joint_info_list):
+            self._create_axis_row()
+        name_counts = {}
         self._setting_axis_info = True
-
         try:
             for r in self.axis_rows:
 
@@ -193,14 +234,19 @@ class AxisControlWindow:
                 r["plus"].visible = True
 
             for i, joint in enumerate(joint_info_list):
-
-                if i >= len(self.axis_rows):
-                    break
-
                 r = self.axis_rows[i]
 
                 r["joint"] = joint
-                r["label"].text = joint.get("name", "")
+                base_name = joint.get("name", "")
+                count = name_counts.get(base_name, 0)
+                name_counts[base_name] = count + 1
+
+                if count == 0:
+                    display_name = base_name
+                else:
+                    display_name = f"{base_name}{count}"
+
+                r["label"].text = display_name
 
                 node = joint.get("node")
 
@@ -215,7 +261,6 @@ class AxisControlWindow:
                 r["row"].visible = True
 
                 if joint_type == "signal":
-
                     current_value = joint["node"].joint_value
 
                     r["value"].visible = False
@@ -231,7 +276,6 @@ class AxisControlWindow:
                     )
 
                 else:
-
                     current_value = joint["node"].joint_value
 
                     r["value"].visible = True
@@ -239,7 +283,7 @@ class AxisControlWindow:
                     r["plus"].visible = True
                     r["check"].visible = False
 
-                    r["value"].text_value = f"{current_value:10.4f}"
+                    r["value"].text_value = self._value_format(current_value)
 
                     r["minus"].set_on_clicked(
                         lambda j=joint, row=r:
@@ -297,7 +341,9 @@ class AxisControlWindow:
         self.on_joint_move(joint, amount)
 
         current_value = joint["node"].joint_value
-        row["value"].text_value = f"{current_value:10.4f}"
+        row["value"].text_value = self._value_format(current_value)
+
+        self._refresh()
 
     def _signal_changed(self, joint, checked):
 
@@ -310,3 +356,13 @@ class AxisControlWindow:
             joint,
             value
         )
+        
+        self._refresh()
+    
+    def _refresh(self):
+        self.window.set_needs_layout()
+
+    def _value_format(self, value):
+        text = f"{value:.4f}"
+        count = max(0, 2 * (10-len(text)))
+        return " " * count + text

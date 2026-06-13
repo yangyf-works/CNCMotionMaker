@@ -2,7 +2,7 @@ import numpy as np
 
 
 class Joint:
-    def __init__(self, joint_type, name="", axis=None, pivot=None, path=None, axisno=None, signal="", sprockets=None, loop=False, carriers=None):
+    def __init__(self, joint_type, name="", axis=None, initial_value=None, pivot=None, path=None, axisno=None, signal="", sprockets=None, loop=False, carriers=None):
         self.type = joint_type
         self.name = name
 
@@ -12,6 +12,8 @@ class Joint:
             n = np.linalg.norm(self.axis)
             if n > 0:
                 self.axis /= n
+        
+        self.initial_value=initial_value
 
         self.pivot = np.array(pivot if pivot is not None else [0, 0, 0], dtype=float)
         self.path = path
@@ -28,6 +30,7 @@ class SceneNode:
         self.name = name
         self.children = []
         self.meshes = []
+        self.show_when = None
 
         self.local_T = np.eye(4)
         self.world_T = np.eye(4)

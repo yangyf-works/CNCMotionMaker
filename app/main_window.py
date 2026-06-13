@@ -31,11 +31,22 @@ class MainWindow:
         self.window.add_child(self.control_panel.widget)
 
         self.window.set_on_layout(self._on_layout)
+        self.window.set_on_close(
+            self._on_close
+        )
 
         self.axis_window = AxisControlWindow(
             on_joint_move=self.on_joint_move
         )
         self._move_axis_window()
+        gui.Application.instance.post_to_main_thread(
+            self.window,
+            self._initial_refresh
+        )
+
+    def _initial_refresh(self):
+        self.window.set_needs_layout()
+        self.scene_view.widget.force_redraw()
 
     def _on_layout(self, layout_context):
 
@@ -80,7 +91,7 @@ class MainWindow:
             joint_info["node"],
             direction
         )
-    
+
     def _move_axis_window(self):
 
         main_rect = self.window.os_frame
@@ -90,3 +101,10 @@ class MainWindow:
         axis_rect.y = main_rect.y
 
         self.axis_window.window.os_frame = axis_rect
+    
+    def _on_close(self):
+
+        if self.axis_window is not None:
+            self.axis_window.window.close()
+
+        return True
