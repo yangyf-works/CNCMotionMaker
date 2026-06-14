@@ -131,7 +131,7 @@
         "name": "Work",
         "type": "signal",
         "signal": "X4.4",
-        "initial_value": 1
+        "initial_value": 0
       }
     },
     "tableB": {

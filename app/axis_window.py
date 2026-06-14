@@ -18,32 +18,38 @@ class AxisControlWindow:
         self.on_joint_move = on_joint_move
 
         self.window = gui.Application.instance.create_window(
-            "Axis Control",
-            230,
+            "Joint Control",
+            400,
             720
         )
 
-        self.layout = gui.Vert(
+        self.motion_panel = gui.Vert(
             5,
             gui.Margins(10, 10, 10, 10)
         )
-
-        self.window.add_child(self.layout)
-
-        self.window.set_on_layout(
-            self._on_layout
+        self.signal_panel = gui.Vert(
+            5,
+            gui.Margins(10, 10, 0, 10)
         )
+        self.window.add_child(self.motion_panel)
+        self.window.add_child(self.signal_panel)
+        self.window.set_on_layout(self._on_layout)
+        self.allow_close = False
+        self.window.set_on_close(self._on_close)
 
         #
         # タイトル
         #
-        self.layout.add_child(
-            gui.Label("===  Axis Control  ===")
+        self.motion_panel.add_child(
+            gui.Label("[Motion Axis]")
         )
         self.jog_override_index = 4  # x1
         self.jog_override = override_items[self.jog_override_index][1]
 
-        self.layout.add_child(gui.Label("Override"))
+        self.motion_panel.add_child(gui.Label("Override"))
+        self.signal_panel.add_child(
+            gui.Label("[Signal]")
+        )
 
         self.override_row = gui.Horiz(5)
 
@@ -59,7 +65,7 @@ class AxisControlWindow:
         self.override_plus_btn.vertical_padding_em = 0.1
 
         for text, value in override_items:
-            self.override_combo.add_item(f"{text:<14}")
+            self.override_combo.add_item(f"{text:<18}")
 
         self.override_combo.selected_index = self.jog_override_index
 
@@ -86,11 +92,11 @@ class AxisControlWindow:
         self.override_row.add_child(self.override_minus_btn)
         self.override_row.add_child(self.override_plus_btn)
 
-        self.layout.add_child(self.override_row)
+        self.motion_panel.add_child(self.override_row)
         self._setting_axis_info = False
-        # 固定行を事前作成
-        #
-        self.axis_rows = []
+        
+        self.motion_axis_rows = []
+        self.signal_axis_rows = []
                 
         gui.Application.instance.post_to_main_thread(
             self.window,
@@ -99,53 +105,6 @@ class AxisControlWindow:
 
     def _initial_refresh(self):
         self.window.set_needs_layout()
-
-    def _create_axis_row(self):
-        axis_row = gui.Horiz(5)
-
-        name_label = gui.Label("")
-        
-        value_edit = gui.TextEdit()
-        value_edit.enabled = True
-        value_edit.text_value = self._value_format(0)
-
-        minus_btn = gui.Button("-")
-        plus_btn = gui.Button("+")
-        minus_btn.horizontal_padding_em = 0.2
-        minus_btn.vertical_padding_em = 0.1
-        plus_btn.horizontal_padding_em = 0.2
-        plus_btn.vertical_padding_em = 0.1
-
-        signal_check = gui.Checkbox("")
-        signal_check.visible = False
-
-        row_dict = {
-            "row": axis_row,
-            "label": name_label,
-            "value": value_edit,
-            "check": signal_check,
-            "minus": minus_btn,
-            "plus": plus_btn,
-            "joint": None,
-        }
-
-        value_edit.set_on_value_changed(
-            lambda text, row=row_dict:
-                self._apply_value_text(row, text)
-        )
-
-        axis_row.add_child(name_label)
-        axis_row.add_stretch()
-        axis_row.add_child(value_edit)
-        axis_row.add_child(signal_check)
-        axis_row.add_child(minus_btn)
-        axis_row.add_child(plus_btn)
-
-        axis_row.visible = False
-
-        self.layout.add_child(axis_row)
-
-        self.axis_rows.append(row_dict)
 
     def _apply_value_text(self, row, text):
         if self._setting_axis_info:
@@ -159,146 +118,213 @@ class AxisControlWindow:
         try:
             target_value = float(text.strip())
         except ValueError:
-            current_value = joint["node"].joint_value
-            row["value"].text_value = self._value_format(current_value)
-            self._refresh()
+            self._restore_current_value(row)
             return
 
-        current_value = joint["node"].joint_value
-        amount = target_value - current_value
-
-        self.on_joint_move(
-            joint,
-            amount
-        )
-
-        current_value = joint["node"].joint_value
+        amount = target_value - joint["node"].joint_value
+        self.on_joint_move(joint, amount)
+        self._restore_current_value(row)
+    
+    def _restore_current_value(self, row):
+        current_value = row["joint"]["node"].joint_value
         row["value"].text_value = self._value_format(current_value)
-
         self._refresh()
 
     def _on_layout(self, layout_context):
-
-        self.layout.frame = self.window.content_rect
-
         content = self.window.content_rect
 
-        margin = 10
-        gap = 5
+        margin = 0
+        gap = 2
 
-        btn_w = 36
-        row_h = 32
+        left_w = 250
+        right_w = content.width - left_w - gap - margin * 2
 
         x = content.x + margin
-        y = self.override_row.frame.y
+        y = content.y + margin
+        h = content.height - margin * 2
 
-        total_w = content.width - margin * 2
-
-        combo_w = total_w - btn_w * 2 - gap * 2
-
-        self.override_minus_btn.frame = gui.Rect(
+        self.motion_panel.frame = gui.Rect(
             x,
             y,
-            btn_w,
-            row_h
+            left_w,
+            h
         )
 
-        self.override_combo.frame = gui.Rect(
-            x + btn_w + gap,
+        self.signal_panel.frame = gui.Rect(
+            x + left_w + gap,
             y,
-            combo_w,
-            row_h
+            right_w,
+            h
         )
 
-        self.override_plus_btn.frame = gui.Rect(
-            x + btn_w + gap + combo_w + gap,
-            y,
-            btn_w,
-            row_h
-        )
+    def _on_close(self):
+        return self.allow_close
 
+    def close_from_main(self):
+        self.allow_close = True
+        self.window.close()
+    
     def set_axis_info(self, joint_info_list):
-        while len(self.axis_rows) < len(joint_info_list):
-            self._create_axis_row()
-        name_counts = {}
         self._setting_axis_info = True
+        signal_joints = []
+        motion_joints = []
+
+        for joint in joint_info_list:
+            joint_def = joint.get("node").joint
+            joint_type = getattr(joint_def, "type", "")
+
+            if joint_type == "signal":
+                signal_joints.append(joint)
+            else:
+                motion_joints.append(joint)
+
         try:
-            for r in self.axis_rows:
-
-                r["row"].visible = False
-                r["joint"] = None
-
-                r["value"].visible = True
-                r["check"].visible = False
-                r["minus"].visible = True
-                r["plus"].visible = True
-
-            for i, joint in enumerate(joint_info_list):
-                r = self.axis_rows[i]
-
-                r["joint"] = joint
-                base_name = joint.get("name", "")
-                count = name_counts.get(base_name, 0)
-                name_counts[base_name] = count + 1
-
-                if count == 0:
-                    display_name = base_name
-                else:
-                    display_name = f"{base_name}{count}"
-
-                r["label"].text = display_name
-
-                node = joint.get("node")
-
-                if node is None:
-                    continue
-
-                joint_def = node.joint
-                joint_type = getattr(joint_def, "type", "")
-
-                current_value = node.joint_value
-
-                r["row"].visible = True
-
-                if joint_type == "signal":
-                    current_value = joint["node"].joint_value
-
-                    r["value"].visible = False
-                    r["minus"].visible = False
-                    r["plus"].visible = False
-
-                    r["check"].visible = True
-                    r["check"].checked = bool(current_value)
-
-                    r["check"].set_on_checked(
-                        lambda checked, j=joint:
-                            self._signal_changed(j, checked)
-                    )
-
-                else:
-                    current_value = joint["node"].joint_value
-
-                    r["value"].visible = True
-                    r["minus"].visible = True
-                    r["plus"].visible = True
-                    r["check"].visible = False
-
-                    r["value"].text_value = self._value_format(current_value)
-
-                    r["minus"].set_on_clicked(
-                        lambda j=joint, row=r:
-                            self._move_joint(j, row, -self.jog_override)
-                    )
-
-                    r["plus"].set_on_clicked(
-                        lambda j=joint, row=r:
-                            self._move_joint(j, row, self.jog_override)
-                    )
-
+            self.set_motion_axis_info(motion_joints)
+            self.set_signal_axis_info(signal_joints)
         finally:
             self._setting_axis_info = False
 
         self.window.set_needs_layout()
+
+    def set_motion_axis_info(self, joint_info_list):
+        while len(self.motion_axis_rows) < len(joint_info_list):
+            axis_row = gui.Horiz(5)
+            name_label = gui.Label("")
+            value_edit = gui.TextEdit()
+            value_edit.enabled = True
+            value_edit.text_value = self._value_format(0)
+
+            minus_btn = gui.Button("-")
+            plus_btn = gui.Button("+")
+            minus_btn.horizontal_padding_em = 0.2
+            minus_btn.vertical_padding_em = 0.1
+            plus_btn.horizontal_padding_em = 0.2
+            plus_btn.vertical_padding_em = 0.1
+
+            row_dict = {
+                "row": axis_row,
+                "label": name_label,
+                "value": value_edit,
+                "minus": minus_btn,
+                "plus": plus_btn,
+                "joint": None,
+            }
+
+            value_edit.set_on_value_changed(
+                lambda text, row=row_dict:
+                    self._apply_value_text(row, text)
+            )
+
+            axis_row.add_child(name_label)
+            axis_row.add_stretch()
+            axis_row.add_child(value_edit)
+            axis_row.add_child(minus_btn)
+            axis_row.add_child(plus_btn)
+
+            axis_row.visible = False
+            self.motion_panel.add_child(axis_row)
+            self.motion_axis_rows.append(row_dict)
+
+        name_counts = {}
+        for r in self.motion_axis_rows:
+            r["row"].visible = False
+            r["joint"] = None
+
+        for i, joint in enumerate(joint_info_list):
+            r = self.motion_axis_rows[i]
+
+            r["joint"] = joint
+            base_name = joint.get("name", "")
+            count = name_counts.get(base_name, 0)
+            name_counts[base_name] = count + 1
+
+            if count == 0:
+                display_name = base_name
+            else:
+                display_name = f"{base_name}{count}"
+            if len(display_name) == 1:
+                display_name = " "*2 + display_name
+            r["label"].text = display_name
+
+            node = joint.get("node")
+
+            if node is None:
+                continue
+
+            r["row"].visible = True
+
+            current_value = joint["node"].joint_value
+
+            r["value"].visible = True
+            r["minus"].visible = True
+            r["plus"].visible = True
+            r["value"].text_value = self._value_format(current_value)
+            r["minus"].set_on_clicked(
+                lambda j=joint, row=r:
+                    self._move_joint(j, row, -self.jog_override)
+            )
+            r["plus"].set_on_clicked(
+                lambda j=joint, row=r:
+                    self._move_joint(j, row, self.jog_override)
+            )
+
+    def set_signal_axis_info(self, joint_info_list):
+        while len(self.signal_axis_rows) < len(joint_info_list):
+            axis_row = gui.Horiz(4)
+            name_label = gui.Label("")
+            signal_check = gui.Checkbox("")
+            signal_check.visible = False
+
+            row_dict = {
+                "row": axis_row,
+                "label": name_label,
+                "check": signal_check,
+                "joint": None,
+            }
+
+            axis_row.add_child(name_label)
+            axis_row.add_stretch()
+            axis_row.add_child(signal_check)
+
+            axis_row.visible = False
+
+            self.signal_panel.add_child(axis_row)
+            self.signal_axis_rows.append(row_dict)
+
+        name_counts = {}
+        for r in self.signal_axis_rows:
+            r["row"].visible = False
+            r["joint"] = None
+            r["check"].visible = False
+
+        for i, joint in enumerate(joint_info_list):
+            r = self.signal_axis_rows[i]
+
+            r["joint"] = joint
+            base_name = joint.get("name", "")
+            count = name_counts.get(base_name, 0)
+            name_counts[base_name] = count + 1
+
+            if count == 0:
+                display_name = base_name
+            else:
+                display_name = f"{base_name}{count}"
+
+            r["label"].text = display_name
+
+            node = joint.get("node")
+
+            if node is None:
+                continue
+
+            r["row"].visible = True
+            r["check"].visible = True
+            r["check"].checked = bool(joint["node"].joint_value)
+
+            r["check"].set_on_checked(
+                lambda checked, j=joint:
+                    self._signal_changed(j, checked)
+            )
 
     def _set_override_index(self, index):
 

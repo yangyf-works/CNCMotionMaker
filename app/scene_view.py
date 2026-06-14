@@ -59,7 +59,7 @@ class SceneView:
         )
         
         self.default_sun_dir = self.cur_sun_dir.copy()
-        self.camera_fov = 60.0
+        self.camera_fov = 45.0
         self.camera_fov_step = 5.0
         self.camera_pan_step = 10.0
         self._init_key_state()
@@ -170,12 +170,10 @@ class SceneView:
             gui.KeyName.L: self.on_reset_light,
             gui.KeyName.UP: lambda: self.on_camera_zoom(+1),
             gui.KeyName.DOWN: lambda: self.on_camera_zoom(-1),
-            gui.KeyName.LEFT: lambda:self.on_camera_orbit(1, 0),
-            gui.KeyName.RIGHT:lambda:self.on_camera_orbit(-1, 0),
+            gui.KeyName.LEFT: lambda: self.set_camera_fov(self.camera_fov - self.camera_fov_step),
+            gui.KeyName.RIGHT:lambda: self.set_camera_fov(self.camera_fov + self.camera_fov_step),
         }
         shiftkeymap = {
-            gui.KeyName.UP: lambda: self.set_camera_fov(self.camera_fov - self.camera_fov_step),
-            gui.KeyName.DOWN: lambda: self.set_camera_fov(self.camera_fov + self.camera_fov_step),
         }
 
         if self.ctrl_down or self.shift_down or self.alt_down :

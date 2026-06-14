@@ -34,9 +34,12 @@ class ControlPanel:
         self.widget.add_child(self.json_combo)
 
         load_button = gui.Button("Load Model")
+        load_button.horizontal_padding_em = 0.2
+        load_button.vertical_padding_em = 0.1
         load_button.set_on_clicked(self._on_load_clicked)
 
         self.widget.add_child(load_button)
+        self._add_manual()
 
     def _find_json_files(self):
 
@@ -67,5 +70,63 @@ class ControlPanel:
 
         self.on_json_selected(json_path)
 
+    def _add_manual(self):
+        mouse_manual = self._create_manual_table(
+            "Mouse Operation",
+            [
+                ("Left Drag :", "Rotate View"),
+                ("Middle Drag :", "Rotate Light"),
+                ("Right Drag :", "Pan View"),
+                ("Wheel :", "Zoom In/Out"),
+            ]
+        )
+        self.widget.add_child(mouse_manual)
 
-        
+        key_manual = self._create_manual_table(
+            "Key Operation",
+            [
+                ("Arrow Keys :", "Orbit View"),
+                ("W/A/S/D :", "Pan View"),
+                ("Q/E :", "Roll View"),
+            ]
+        )
+        self.widget.add_child(key_manual)
+
+        ctrlkey_manual = self._create_manual_table(
+            "Ctrl + Key Operation",
+            [
+                ("Up :", "Zoom In"),
+                ("Down :", "Zoom Out"),
+                ("Left :", "Narrow FOV"),
+                ("Right :", "Wide FOV"),
+                ("C :", "Reset Camera"),
+                ("L :", "Reset Light"),
+                ("A :", "Show Joint Axes"),
+                ("S :", "Export STL"),
+            ]
+        )
+        self.widget.add_child(ctrlkey_manual)
+
+    def _create_manual_table(self, title, rows):
+        manual_box = gui.CollapsableVert(
+            title,
+            1,
+            gui.Margins(0, 4, 0, 0)
+        )
+
+        table = gui.Horiz(5)
+
+        operation_col = gui.Vert(1)
+        description_col = gui.Vert(1)
+
+        table.add_child(operation_col)
+        table.add_child(description_col)
+
+        for operation, description in rows:
+            operation_col.add_child(gui.Label(operation))
+            description_col.add_child(gui.Label(description))
+
+        manual_box.add_child(table)
+
+        return manual_box
+            

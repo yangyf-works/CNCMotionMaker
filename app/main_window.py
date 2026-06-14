@@ -12,7 +12,7 @@ class MainWindow:
     def __init__(self):
 
         self.window = gui.Application.instance.create_window(
-            "3D Model Viewer",
+            "CNCMotionMaker",
             1280,
             720
         )
@@ -51,7 +51,7 @@ class MainWindow:
     def _on_layout(self, layout_context):
 
         rect = self.window.content_rect
-        panel_width = 200
+        panel_width = 280
 
         self.scene_view.widget.frame = gui.Rect(
             rect.x,
@@ -103,8 +103,7 @@ class MainWindow:
         self.axis_window.window.os_frame = axis_rect
     
     def _on_close(self):
-
         if self.axis_window is not None:
-            self.axis_window.window.close()
+            self.axis_window.window.close_from_main()
 
         return True
