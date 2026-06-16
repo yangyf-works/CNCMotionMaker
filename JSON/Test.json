@@ -1,0 +1,41 @@
+{
+  "definitions": {
+    "rod": {
+      "type": "mesh",
+      "file": "cylinder.ply",
+      "transform": {
+            "scale": 1,
+            "position": [0, 0.0, 0],
+            "rotation": [90, 0, 0]
+          }
+    },
+
+    "test_part": {
+      "type": "node",
+      "transform": {
+            "scale": 1,
+            "position": [0, 0.0, 0],
+            "rotation": [90, 0, 0]
+          },
+      "children": [
+        {
+          "ref": "rod",
+          "transform": {
+            "scale": 1,
+            "position": [0, 0.0, 0],
+            "rotation": [-90, 0, 0]
+          }
+        }
+      ]
+    }
+  },
+
+  "scene": [
+    {
+      "ref": "test_part",
+      "transform": {
+        "position": [0, 0, 0]
+      }
+    }
+  ]
+}

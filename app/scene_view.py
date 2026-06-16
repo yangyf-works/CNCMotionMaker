@@ -1,14 +1,12 @@
 import copy
 import json
 from pathlib import Path
-from unittest import case
 import numpy as np
 import math
 
 import open3d as o3d
 import open3d.visualization.gui as gui # type: ignore
 import open3d.visualization.rendering as rendering # type: ignore
-from wcwidth import center # type: ignore
 
 from core.model_builder import build_geometry_list_from_model_json, collect_export_meshes
 from core.chain_utils import (
@@ -72,7 +70,6 @@ class SceneView:
         self.show_axis = False
 
     def _create_test_geometry(self):
-
         axis = o3d.geometry.TriangleMesh.create_coordinate_frame(
             size=1.0
         )
@@ -84,14 +81,7 @@ class SceneView:
         )
 
         self.geometry_names.append("axis")
-
-        bbox = axis.get_axis_aligned_bounding_box()
-
-        self.widget.setup_camera(
-            60,
-            bbox,
-            bbox.get_center()
-        )
+        self.on_reset_camera()
 
     def clear_scene(self):
 
@@ -112,30 +102,18 @@ class SceneView:
                 json_path
             )
             self.refresh_model()
-            self.reset_camera_to_model()
-
+            self.on_reset_camera()
             print("Model loaded:", json_path.name)
 
         except Exception:
             traceback.print_exc()
-            
-    def reset_camera_to_model(self):
-        bbox = self.get_scene_bbox()
-        
-        self.widget.setup_camera(
-            60,
-            bbox,
-            bbox.get_center()
-        )
 
     def _build_model_from_json(self, data, json_path):
         roots, geometry_list = build_geometry_list_from_model_json(
             data,
             str(json_path.parent)
         )
-
         self.roots = roots
-
         return geometry_list
     
     def _init_key_state(self):
@@ -354,8 +332,6 @@ class SceneView:
 
     
     def on_reset_camera(self):
-        print("Reset Camera")
-
         bounds = self.widget.scene.bounding_box
 
         self.widget.setup_camera(
@@ -409,7 +385,6 @@ class SceneView:
 
         # 現在のカメラ姿勢
         eye = model[:3, 3]
-        right = model[:3, 0]
         up = model[:3, 1]
         backward = model[:3, 2]
 

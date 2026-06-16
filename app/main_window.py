@@ -38,7 +38,8 @@ class MainWindow:
         self.axis_window = AxisControlWindow(
             on_joint_move=self.on_joint_move
         )
-        self._move_axis_window()
+        self._move_sub_window()
+
         gui.Application.instance.post_to_main_thread(
             self.window,
             self._initial_refresh
@@ -51,7 +52,7 @@ class MainWindow:
     def _on_layout(self, layout_context):
 
         rect = self.window.content_rect
-        panel_width = 280
+        panel_width = 225
 
         self.scene_view.widget.frame = gui.Rect(
             rect.x,
@@ -92,16 +93,14 @@ class MainWindow:
             direction
         )
 
-    def _move_axis_window(self):
-
+    def _move_sub_window(self):
         main_rect = self.window.os_frame
-        axis_rect = self.axis_window.window.os_frame
 
+        axis_rect = self.axis_window.window.os_frame
         axis_rect.x = main_rect.x + main_rect.width + 10
         axis_rect.y = main_rect.y
-
         self.axis_window.window.os_frame = axis_rect
-    
+        
     def _on_close(self):
         if self.axis_window is not None:
             self.axis_window.window.close_from_main()

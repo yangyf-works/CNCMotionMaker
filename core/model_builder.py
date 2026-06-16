@@ -152,8 +152,9 @@ def build_node(node_def, defs, base_dir, path="", flip_normal=False):
         node.local_T = node_def["_local_T"]
     else:
         node.local_T = make_transform(node_def.get("transform"))
-        
-    det = np.linalg.det((node.local_T))
+    node.local_T = node.local_T@make_transform(defn.get("transform", {}))
+    
+    det = np.linalg.det(node.local_T[:3,:3])
     current_flip = flip_normal if det > 0 else not flip_normal
 
     if defn["type"] == "mesh":

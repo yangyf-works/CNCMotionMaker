@@ -12,11 +12,11 @@ class ControlPanel:
         self.json_files = self._find_json_files()
 
         self.widget = gui.Vert(
-            10,
-            gui.Margins(10, 10, 10, 10)
+            5,
+            gui.Margins(5, 5, 1, 5)
         )
 
-        title = gui.Label("CNCMotionMaker")
+        title = gui.Label("Model select")
         self.widget.add_child(title)
 
         self.json_combo = gui.Combobox()
@@ -72,18 +72,18 @@ class ControlPanel:
 
     def _add_manual(self):
         mouse_manual = self._create_manual_table(
-            "Mouse Operation",
+            "Mouse",
             [
-                ("Left Drag :", "Rotate View"),
-                ("Middle Drag :", "Rotate Light"),
-                ("Right Drag :", "Pan View"),
+                ("Left :", "Rotate View"),
+                ("Middle :", "Rotate Light"),
+                ("Right :", "Pan View"),
                 ("Wheel :", "Zoom In/Out"),
             ]
         )
         self.widget.add_child(mouse_manual)
 
         key_manual = self._create_manual_table(
-            "Key Operation",
+            "Key",
             [
                 ("Arrow Keys :", "Orbit View"),
                 ("W/A/S/D :", "Pan View"),
@@ -93,7 +93,7 @@ class ControlPanel:
         self.widget.add_child(key_manual)
 
         ctrlkey_manual = self._create_manual_table(
-            "Ctrl + Key Operation",
+            "Ctrl + Key",
             [
                 ("Up :", "Zoom In"),
                 ("Down :", "Zoom Out"),
@@ -101,7 +101,7 @@ class ControlPanel:
                 ("Right :", "Wide FOV"),
                 ("C :", "Reset Camera"),
                 ("L :", "Reset Light"),
-                ("A :", "Show Joint Axes"),
+                ("A :", "Show Joint"),
                 ("S :", "Export STL"),
             ]
         )
@@ -110,14 +110,14 @@ class ControlPanel:
     def _create_manual_table(self, title, rows):
         manual_box = gui.CollapsableVert(
             title,
-            1,
-            gui.Margins(0, 4, 0, 0)
+            2,
+            gui.Margins(2, 5, 0, 0)
         )
 
-        table = gui.Horiz(5)
+        table = gui.Horiz(1)
 
-        operation_col = gui.Vert(1)
-        description_col = gui.Vert(1)
+        operation_col = gui.Vert(0)
+        description_col = gui.Vert(0)
 
         table.add_child(operation_col)
         table.add_child(description_col)
