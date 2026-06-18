@@ -392,3 +392,36 @@ class AxisControlWindow:
         text = f"{value:.4f}"
         count = max(0, 2 * (10-len(text)))
         return " " * count + text
+    
+    def refresh_axis_values(self):
+        if self._setting_axis_info:
+            return
+
+        self._setting_axis_info = True
+        try:
+            for r in self.motion_axis_rows:
+                joint = r.get("joint")
+                if joint is None:
+                    continue
+
+                node = joint.get("node")
+                if node is None:
+                    continue
+
+                r["value"].text_value = self._value_format(node.joint_value)
+
+            for r in self.signal_axis_rows:
+                joint = r.get("joint")
+                if joint is None:
+                    continue
+
+                node = joint.get("node")
+                if node is None:
+                    continue
+
+                r["check"].checked = bool(node.joint_value)
+
+        finally:
+            self._setting_axis_info = False
+
+        self._refresh()

@@ -880,3 +880,17 @@ class SceneView:
             )
 
             self.axis_geometry_names.append(name)
+
+    def set_joint_value_by_name(self, axis_name, value):
+        for node in self.iter_joint_nodes():
+            joint = node.joint
+
+            if joint is None:
+                continue
+
+            if joint.name == axis_name:
+                node.joint_value = float(value)
+                return True
+
+        print(f"Axis not found: {axis_name}")
+        return False

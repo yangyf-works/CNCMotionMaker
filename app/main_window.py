@@ -5,12 +5,12 @@ import open3d.visualization.gui as gui # type: ignore
 from app.scene_view import SceneView
 from app.control_panel import ControlPanel
 from app.axis_window import AxisControlWindow
+from app.program_window_qt import ProgramWindowQt
 from core.model_builder import collect_all_joint_info
 
 class MainWindow:
 
     def __init__(self):
-
         self.window = gui.Application.instance.create_window(
             "CNCMotionMaker",
             1280,
@@ -38,6 +38,10 @@ class MainWindow:
         self.axis_window = AxisControlWindow(
             on_joint_move=self.on_joint_move
         )
+        self.program_window = ProgramWindowQt(
+            on_position_sample=self.apply_program_position
+        )
+        self.program_window.show()
         self._move_sub_window()
 
         gui.Application.instance.post_to_main_thread(
@@ -101,8 +105,42 @@ class MainWindow:
         axis_rect.y = main_rect.y
         self.axis_window.window.os_frame = axis_rect
         
+        scale = self.program_window.devicePixelRatioF()
+        self.program_window.resize(
+            self.program_window.width(),
+            int(main_rect.height / scale)
+        )
+        program_rect = self.program_window.frameGeometry()
+        main_left = (main_rect.x ) / scale
+        main_top = (main_rect.y ) / scale
+        program_width = program_rect.width()
+
+        program_x = main_left - program_width - 5
+        program_y = main_top - 30
+
+        self.program_window.move(
+            int(program_x),
+            int(program_y)
+        )
+            
     def _on_close(self):
         if self.axis_window is not None:
             self.axis_window.window.close_from_main()
+        if self.program_window is not None:
+            self.program_window.close()
 
         return True
+    
+    def apply_program_position(self, position):
+        for axis_name, value in position.items():
+            self.scene_view.set_joint_value_by_name(axis_name, value)
+            
+        gui.Application.instance.post_to_main_thread(
+            self.axis_window.window,
+            self.axis_window.refresh_axis_values
+        )
+        gui.Application.instance.post_to_main_thread(
+            self.scene_view.window,
+            self.scene_view.refresh_model
+        )
+        
