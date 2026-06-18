@@ -396,12 +396,24 @@ class ProgramWindowQt(QMainWindow):
     def step_back(self):
         if not self.samples:
             self.samples = self.parse_program()
+            self.sample_index = 0
 
-        self.sample_index = max(0, self.sample_index - 1)
+        if not self.samples:
+            return
 
-        if self.samples:
-            position = self.samples[self.sample_index]
-            print(position)
+        self.sample_index = max(0, self.sample_index - 2)
+
+        sample_info = self.samples[self.sample_index]
+
+        self.editor.highlight_program_line(
+            sample_info["line_index"]
+        )
+
+        self.send_position(
+            sample_info["position"]
+        )
+
+        self.sample_index += 1
 
 if __name__ == "__main__":
     app = QApplication([])
