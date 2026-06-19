@@ -1,7 +1,7 @@
 from __future__ import annotations
 import math
 from PySide6.QtCore import Qt, QRect, QSize, QTimer
-from PySide6.QtGui import QColor, QFont, QPainter, QTextFormat
+from PySide6.QtGui import QColor, QFont, QPainter, QTextFormat, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-
+import re
 
 class LineNumberArea(QWidget):
     def __init__(self, editor):
@@ -41,9 +41,9 @@ class ProgramEditor(QPlainTextEdit):
         self.updateRequest.connect(
             self.update_line_number_area
         )
-        #self.cursorPositionChanged.connect(
-        #    self.highlight_current_line
-        #)
+        self.cursorPositionChanged.connect(
+            self.highlight_current_line
+        )
 
         self.update_line_number_area_width(0)
         self.highlight_current_line()
@@ -53,13 +53,16 @@ class ProgramEditor(QPlainTextEdit):
 
         self.setPlainText(
             "X1 Y2 Z1 F60\n"
+            "Tool OFF\n"
+            "WAIT 2.5\n"
             "X-1 Y-1\n"
+            "Work ON\n"
             "Y0 Z2 F12\n"
             "Z-2 F20"
         )
 
     def line_number_area_width(self):
-        digits = len(str(max(1, self.blockCount())))
+        digits = max(2, len(str(max(1, self.blockCount()))))
         return 12 + self.fontMetrics().horizontalAdvance("9") * digits
 
     def update_line_number_area_width(self, _):
@@ -101,7 +104,7 @@ class ProgramEditor(QPlainTextEdit):
         painter = QPainter(self.line_number_area)
         painter.fillRect(
             event.rect(),
-            QColor(245, 245, 245),
+            QColor(70, 70, 70),
         )
 
         block = self.firstVisibleBlock()
@@ -119,7 +122,7 @@ class ProgramEditor(QPlainTextEdit):
             if block.isVisible() and bottom >= event.rect().top():
                 number = str(block_number + 1)
 
-                painter.setPen(QColor(120, 120, 120))
+                painter.setPen(QColor(180, 180, 180))
                 painter.drawText(
                     0,
                     top,
@@ -137,10 +140,13 @@ class ProgramEditor(QPlainTextEdit):
             block_number += 1
 
     def highlight_current_line(self):
+        if self.isReadOnly():
+            return
+
         extra_selection = QTextEdit.ExtraSelection()
 
         extra_selection.format.setBackground(
-            QColor(55, 145, 155)
+            QColor(45, 75, 85)
         )
         extra_selection.format.setProperty(
             QTextFormat.FullWidthSelection,
@@ -160,7 +166,7 @@ class ProgramEditor(QPlainTextEdit):
 
             if block.isValid():
                 selection = QTextEdit.ExtraSelection()
-                selection.format.setBackground(QColor(255, 230, 120))
+                selection.format.setBackground(QColor(120, 150, 100))
                 selection.format.setProperty(
                     QTextFormat.FullWidthSelection,
                     True,
@@ -239,14 +245,14 @@ class ProgramWindowQt(QMainWindow):
 
         side_layout.addSpacing(4)
 
-        side_layout.addWidget(QLabel("Update Interval"))
+        side_layout.addWidget(QLabel("Interval"))
         side_layout.addWidget(self.interval_combo)
 
         side_layout.addStretch()
 
         side_widget = QWidget()
         side_widget.setLayout(side_layout)
-        side_widget.setFixedWidth(80)
+        side_widget.setFixedWidth(70)
 
         root_layout = QHBoxLayout()
         root_layout.addWidget(self.editor, 1)
@@ -256,6 +262,7 @@ class ProgramWindowQt(QMainWindow):
         root.setLayout(root_layout)
 
         self.setCentralWidget(root)
+        self.apply_dark_theme()
 
     def get_program_text(self):
         return self.editor.toPlainText()
@@ -274,12 +281,7 @@ class ProgramWindowQt(QMainWindow):
     def parse_program(self):
         interval_sec = self.get_interval_sec()
 
-        current = {
-            "X": 0.0,
-            "Y": 0.0,
-            "Z": 0.0,
-        }
-
+        current = {}
         current_feed = 1000.0  # mm/min
         samples = []
 
@@ -289,30 +291,82 @@ class ProgramWindowQt(QMainWindow):
             if not line:
                 continue
 
+            line_upper = line.upper()
+            if line_upper.startswith("WAIT "):
+                wait_sec = float(line.split()[1])
+
+                step_count = max(
+                    1,
+                    math.ceil(wait_sec / interval_sec)
+                )
+
+                for _ in range(step_count):
+                    samples.append({
+                        "position": current.copy(),
+                        "line_index": line_index,
+                    })
+
+                continue
+
             target = current.copy()
             feed = current_feed
 
             parts = line.split()
 
+            if len(parts) == 2 and parts[1].upper() in ("ON", "OFF"):
+                signal_name = parts[0]
+                signal_value = 1.0 if parts[1].upper() == "ON" else 0.0
+
+                current[signal_name] = signal_value
+
+                samples.append({
+                    "position": current.copy(),
+                    "line_index": line_index,
+                })
+
+                continue
+
             for part in parts:
-                key = part[0].upper()
-                value = float(part[1:])
+                match = re.fullmatch(
+                    r"([A-Za-z]{1,2})([-+]?\d*\.?\d+)",
+                    part
+                )
+                if not match:
+                    raise ValueError(
+                        f"Invalid word: {part}"
+                    )
+
+                key = match.group(1).upper()
+                value = float(match.group(2))
 
                 if key == "F":
                     feed = value
                 else:
                     target[key] = value
 
-            dx = target.get("X", current.get("X", 0.0)) - current.get("X", 0.0)
-            dy = target.get("Y", current.get("Y", 0.0)) - current.get("Y", 0.0)
-            dz = target.get("Z", current.get("Z", 0.0)) - current.get("Z", 0.0)
+                    if key not in current:
+                        current[key] = 0.0
 
-            distance = math.sqrt(dx * dx + dy * dy + dz * dz)
+            moving_axes = set(current.keys()) | set(target.keys())
+
+            distance_sq = 0.0
+
+            for axis in moving_axes:
+                start_value = current.get(axis, 0.0)
+                end_value = target.get(axis, start_value)
+                diff = end_value - start_value
+                distance_sq += diff * diff
+
+            distance = math.sqrt(distance_sq)
 
             if distance <= 1e-9:
                 current = target
                 current_feed = feed
-                samples.append(current.copy())
+
+                samples.append({
+                    "position": current.copy(),
+                    "line_index": line_index,
+                })
                 continue
 
             feed_mm_per_sec = feed / 60.0
@@ -328,11 +382,13 @@ class ProgramWindowQt(QMainWindow):
 
                 sample = {}
 
-                for axis in target:
+                for axis in moving_axes:
                     start_value = current.get(axis, 0.0)
                     end_value = target.get(axis, start_value)
 
-                    sample[axis] = start_value + (end_value - start_value) * t
+                    sample[axis] = start_value + (
+                        end_value - start_value
+                    ) * t
 
                 samples.append({
                     "position": sample,
@@ -356,16 +412,20 @@ class ProgramWindowQt(QMainWindow):
         if not self.samples:
             return
 
+        self.set_program_editable(False)
         interval_ms = int(self.get_interval_sec() * 1000)
         self.timer.start(interval_ms)
     
     def stop(self):
         self.timer.stop()
+        self.set_program_editable(True)
+        self.editor.highlight_program_line(None)
     
     def _on_timer(self):
         if self.sample_index >= len(self.samples):
             self.timer.stop()
             self.editor.highlight_program_line(None)
+            self.set_program_editable(True)
             return
 
         sample_info = self.samples[self.sample_index]
@@ -379,6 +439,7 @@ class ProgramWindowQt(QMainWindow):
         self.sample_index += 1
 
     def step_forward(self):
+        self.set_program_editable(False)
         if not self.samples:
             self.samples = self.parse_program()
             self.sample_index = 0
@@ -394,6 +455,7 @@ class ProgramWindowQt(QMainWindow):
         self.sample_index += 1
 
     def step_back(self):
+        self.set_program_editable(False)
         if not self.samples:
             self.samples = self.parse_program()
             self.sample_index = 0
@@ -414,6 +476,52 @@ class ProgramWindowQt(QMainWindow):
         )
 
         self.sample_index += 1
+    
+    def apply_dark_theme(self):
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: #232323;
+            }
+
+            QWidget {
+                background-color: #232323;
+                color: white;
+            }
+
+            QPlainTextEdit {
+                background-color: #1e1e1e;
+                color: white;
+                selection-background-color: #4678c8;
+                selection-color: white;
+            }
+
+            QPushButton {
+                background-color: #404040;
+                color: white;
+                border: 1px solid #555555;
+                padding: 3px;
+            }
+
+            QPushButton:hover {
+                background-color: #505050;
+            }
+
+            QComboBox {
+                background-color: #404040;
+                color: white;
+                border: 1px solid #555555;
+                padding: 2px;
+            }
+
+            QLabel {
+                color: white;
+            }
+        """)
+
+    def set_program_editable(self, editable: bool):
+        self.editor.setReadOnly(not editable)
+        if editable:
+            self.editor.highlight_current_line()
 
 if __name__ == "__main__":
     app = QApplication([])

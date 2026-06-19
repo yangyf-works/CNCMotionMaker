@@ -84,16 +84,11 @@ class SceneView:
         self.on_reset_camera()
 
     def clear_scene(self):
-
-        for name in self.geometry_names:
-            self.widget.scene.remove_geometry(name)
-
         self.geometry_names.clear()
+        self.widget.scene.clear_geometry()
 
     def load_json_model(self, json_path: Path):
         try:
-            self.clear_scene()
-
             with open(json_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
