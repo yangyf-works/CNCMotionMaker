@@ -14,12 +14,13 @@ override_items = [
 class AxisControlWindow:
 
     def __init__(self, on_joint_move):
-
         self.on_joint_move = on_joint_move
+        app = gui.Application.instance
+        em = app.menubar_theme.font_size if hasattr(app, "menubar_theme") else 16
 
-        self.window = gui.Application.instance.create_window(
+        self.window = app.create_window(
             "Joint Control",
-            400,
+            int(28 * em),
             720
         )
 
@@ -65,7 +66,7 @@ class AxisControlWindow:
         self.override_plus_btn.vertical_padding_em = 0.1
 
         for text, value in override_items:
-            self.override_combo.add_item(f"{text:<18}")
+            self.override_combo.add_item(f"{text:<16}")
 
         self.override_combo.selected_index = self.jog_override_index
 
@@ -93,6 +94,8 @@ class AxisControlWindow:
         self.override_row.add_child(self.override_plus_btn)
 
         self.motion_panel.add_child(self.override_row)
+        separator = gui.Label("=" *18)
+        self.motion_panel.add_child(separator)
         self._setting_axis_info = False
         
         self.motion_axis_rows = []
@@ -135,8 +138,9 @@ class AxisControlWindow:
 
         margin = 0
         gap = 2
+        em = self.window.theme.font_size
 
-        left_w = 250
+        left_w = int(10 * em)
         right_w = content.width - left_w - gap - margin * 2
 
         x = content.x + margin

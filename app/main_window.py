@@ -56,7 +56,8 @@ class MainWindow:
     def _on_layout(self, layout_context):
 
         rect = self.window.content_rect
-        panel_width = 225
+        em = self.window.theme.font_size
+        panel_width = int(10 * em)
 
         self.scene_view.widget.frame = gui.Rect(
             rect.x,
@@ -98,25 +99,26 @@ class MainWindow:
         )
 
     def _move_sub_window(self):
+        window_gap = 5
         main_rect = self.window.os_frame
 
         axis_rect = self.axis_window.window.os_frame
-        axis_rect.x = main_rect.x + main_rect.width + 10
+        axis_rect.x = main_rect.x + main_rect.width + window_gap
         axis_rect.y = main_rect.y
         self.axis_window.window.os_frame = axis_rect
         
         scale = self.program_window.devicePixelRatioF()
         self.program_window.resize(
             self.program_window.width(),
-            int(main_rect.height / scale)
+            int(main_rect.height / scale) + 30
         )
         program_rect = self.program_window.frameGeometry()
         main_left = (main_rect.x ) / scale
         main_top = (main_rect.y ) / scale
         program_width = program_rect.width()
 
-        program_x = main_left - program_width - 5
-        program_y = main_top - 30
+        program_x = main_left - program_width - window_gap
+        program_y = main_top - 29
 
         self.program_window.move(
             int(program_x),

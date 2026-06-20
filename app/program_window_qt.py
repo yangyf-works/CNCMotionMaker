@@ -1,7 +1,7 @@
 from __future__ import annotations
 import math
-from PySide6.QtCore import Qt, QRect, QSize, QTimer
-from PySide6.QtGui import QColor, QFont, QPainter, QTextFormat, QPalette
+from PySide6.QtCore import Qt, QRect, QSize, QTimer, QPoint
+from PySide6.QtGui import QColor, QFont, QPainter, QTextFormat
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -188,6 +188,9 @@ class ProgramWindowQt(QMainWindow):
 
         self.setWindowTitle("NC Program")
         self.resize(300, 720)
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+        )
 
         self.editor = ProgramEditor()
 
@@ -258,11 +261,73 @@ class ProgramWindowQt(QMainWindow):
         root_layout.addWidget(self.editor, 1)
         root_layout.addWidget(side_widget)
 
+        self._drag_start_pos = None
+        title_bar = self.create_title_bar()
+
+        main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        main_layout.addWidget(title_bar)
+        main_layout.addLayout(root_layout)
+
         root = QWidget()
-        root.setLayout(root_layout)
+        root.setLayout(main_layout)
 
         self.setCentralWidget(root)
         self.apply_dark_theme()
+
+    def create_title_bar(self):
+        title_bar = QWidget()
+        title_bar.setObjectName("TitleBar")
+        title_bar.setFixedHeight(28)
+
+        layout = QHBoxLayout()
+        layout.setContentsMargins(8, 0, 0, 0)
+        layout.setSpacing(4)
+
+        title = QLabel("NC Program")
+
+        close_button = QPushButton("✕")
+        close_button.setObjectName("CloseButton")
+        close_button.setFixedSize(30, 30)
+        close_button.clicked.connect(self.close)
+
+        layout.addWidget(title)
+        layout.addStretch()
+        layout.addWidget(close_button)
+
+        title_bar.setLayout(layout)
+        title_bar.mousePressEvent = self.title_bar_mouse_press_event
+        title_bar.mouseMoveEvent = self.title_bar_mouse_move_event
+        title_bar.mouseReleaseEvent = self.title_bar_mouse_release_event
+
+        return title_bar
+    
+    def title_bar_mouse_press_event(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_start_pos = (
+                event.globalPosition().toPoint()
+                - self.frameGeometry().topLeft()
+            )
+            event.accept()
+
+
+    def title_bar_mouse_move_event(self, event):
+        if (
+            event.buttons() & Qt.MouseButton.LeftButton
+            and self._drag_start_pos is not None
+        ):
+            self.move(
+                event.globalPosition().toPoint()
+                - self._drag_start_pos
+            )
+            event.accept()
+
+
+    def title_bar_mouse_release_event(self, event):
+        self._drag_start_pos = None
+        event.accept()
 
     def get_program_text(self):
         return self.editor.toPlainText()
@@ -402,30 +467,34 @@ class ProgramWindowQt(QMainWindow):
     
     def play(self):
         try:
-            self.samples = self.parse_program()
+            if not self.samples:
+                self.samples = self.parse_program()
+                self.sample_index = 0
         except ValueError as e:
             print(f"Program error: {e}")
             return
 
-        self.sample_index = 0
-
         if not self.samples:
             return
 
+        if self.sample_index >= len(self.samples):
+            return
+
         self.set_program_editable(False)
+
         interval_ms = int(self.get_interval_sec() * 1000)
         self.timer.start(interval_ms)
     
     def stop(self):
         self.timer.stop()
+        self.samples = []
+        self.sample_index = 0
         self.set_program_editable(True)
         self.editor.highlight_program_line(None)
     
     def _on_timer(self):
         if self.sample_index >= len(self.samples):
-            self.timer.stop()
-            self.editor.highlight_program_line(None)
-            self.set_program_editable(True)
+            self.stop()
             return
 
         sample_info = self.samples[self.sample_index]
@@ -439,6 +508,7 @@ class ProgramWindowQt(QMainWindow):
         self.sample_index += 1
 
     def step_forward(self):
+        self.pause_playback()
         self.set_program_editable(False)
         if not self.samples:
             self.samples = self.parse_program()
@@ -455,6 +525,7 @@ class ProgramWindowQt(QMainWindow):
         self.sample_index += 1
 
     def step_back(self):
+        self.pause_playback()
         self.set_program_editable(False)
         if not self.samples:
             self.samples = self.parse_program()
@@ -476,9 +547,42 @@ class ProgramWindowQt(QMainWindow):
         )
 
         self.sample_index += 1
-    
+
+    def pause_playback(self):
+        if self.timer.isActive():
+            self.timer.stop()
+
     def apply_dark_theme(self):
         self.setStyleSheet("""
+            QWidget#TitleBar {
+                background-color: #f3f3f3;
+                border-bottom: 1px solid #d0d0d0;
+            }
+
+            QWidget#TitleBar QLabel {
+                background-color: #f3f3f3;
+                color: #202020;
+                font-size: 12px;
+            }
+
+            QWidget#TitleBar QPushButton {
+                background-color: #f3f3f3;
+                color: #909090;
+                border: none;
+                font-size: 18px;
+            }
+
+            QWidget#TitleBar QPushButton:hover {
+                background-color: #e5e5e5;
+            }
+
+            QWidget#TitleBar QPushButton:pressed {
+                background-color: #d8d8d8;
+            }
+            QWidget#TitleBar QPushButton#CloseButton:hover {
+                background-color: #c42b1c;
+                color: white;
+            }
             QMainWindow {
                 background-color: #232323;
             }
