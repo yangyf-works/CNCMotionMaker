@@ -42,7 +42,9 @@
       "joint": {
         "name": "Z",
         "type": "linear",
-        "axis": [0,1,0]
+        "axis": [0,1,0],
+        "path": 1,
+        "axisno": 3
       }
     },
     
@@ -63,7 +65,9 @@
       "joint": {
         "name": "X",
         "type": "linear",
-        "axis": [1,0,0]
+        "axis": [1,0,0],
+        "path": 1,
+        "axisno": 1
       }
     },
     "SpindleYZbed": {
@@ -152,7 +156,9 @@
         "name": "C",
         "type": "rotate",
         "pivot":[0, 0, 0],
-        "axis": [0, 1, 0]
+        "axis": [0, 1, 0],
+        "path": 1,
+        "axisno": 5
       }
     },
     "tableBC": {
@@ -177,7 +183,9 @@
         "name": "B",
         "type": "rotate",
         "pivot":[0, -1.0, 0],
-        "axis": [0, 0, 1]
+        "axis": [0, 0, 1],
+        "path": 1,
+        "axisno": 4
       }      
     },
     "tableBCX": {
@@ -206,7 +214,9 @@
       "joint": {
         "name": "Y",
         "type": "linear",
-        "axis": [0,0,1]
+        "axis": [0,0,1],
+        "path": 1,
+        "axisno": 2
       }
     },
     "tableBCXbed": {
@@ -239,6 +249,8 @@
       ],
       "joint": {
         "name": "TC",
+        "path": 2,
+        "axisno": 3,
         "type": "chain",
         "loop": true,
         "value": 0,

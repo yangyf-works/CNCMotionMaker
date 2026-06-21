@@ -13,6 +13,13 @@ from PySide6.QtWidgets import (
     QTextEdit,
     QVBoxLayout,
     QWidget,
+    QTabWidget,
+    QTableWidget,
+    QTableWidgetItem,
+    QHeaderView,
+    QFormLayout,
+    QLineEdit,
+    QGridLayout
 )
 import re
 
@@ -181,29 +188,64 @@ class ProgramEditor(QPlainTextEdit):
 
         self.setExtraSelections(selections)
 
-class ProgramWindowQt(QMainWindow):
+class MachinePanelQt(QMainWindow):
     def __init__(self, on_position_sample=None):
         super().__init__()
         self.on_position_sample = on_position_sample
 
-        self.setWindowTitle("NC Program")
+        self.setWindowTitle("Machine Panel")
         self.resize(300, 720)
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
         )
 
+        self.samples = []
+        self.sample_index = 0
+
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self._on_timer)
+
+        self.machine_timer = QTimer(self)
+        self.machine_timer.timeout.connect(self.poll_machine)
+
+        self._drag_start_pos = None
+
+        title_bar = self.create_title_bar("Machine Panel")
+
+        self.tabs = QTabWidget()
+        self.tabs.setDocumentMode(True)
+        self.tabs.tabBar().setExpanding(True)
+
+        self.program_tab = self.create_program_tab()
+        self.digital_twin_tab = self.create_digital_twin_tab()
+
+        self.tabs.addTab(self.program_tab, "NC Program")
+        self.tabs.addTab(self.digital_twin_tab, "Digital Twin")
+
+        self.tabs.currentChanged.connect(
+            self.on_tab_changed
+        )
+
+        main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        main_layout.addWidget(title_bar)
+        main_layout.addWidget(self.tabs)
+
+        root = QWidget()
+        root.setLayout(main_layout)
+
+        self.setCentralWidget(root)
+        self.apply_dark_theme()
+
+    def create_program_tab(self):
         self.editor = ProgramEditor()
 
         self.play_button = QPushButton("Play")
         self.stop_button = QPushButton("Stop")
         self.step_forward_button = QPushButton("Next Step")
         self.step_back_button = QPushButton("Back Step")
-
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self._on_timer)
-
-        self.samples = []
-        self.sample_index = 0
 
         self.play_button.clicked.connect(self.play)
         self.stop_button.clicked.connect(self.stop)
@@ -223,7 +265,11 @@ class ProgramWindowQt(QMainWindow):
             ]
         )
         self.interval_combo.setCurrentText("100 ms")
-        
+        self.interval_combo.currentIndexChanged.connect(
+            self.on_interval_changed
+        )
+        self.interval_combo.setFixedHeight(24)
+
         buttons = [
             self.play_button,
             self.stop_button,
@@ -233,11 +279,6 @@ class ProgramWindowQt(QMainWindow):
 
         for button in buttons:
             button.setFixedHeight(26)
-        
-        self.interval_combo.setFixedHeight(24)
-        self.interval_combo.currentIndexChanged.connect(
-            self.on_interval_changed
-        )
 
         side_layout = QVBoxLayout()
         side_layout.setContentsMargins(0,0,0,0)
@@ -250,37 +291,262 @@ class ProgramWindowQt(QMainWindow):
         side_layout.addWidget(self.step_forward_button)
 
         side_layout.addSpacing(4)
-
         side_layout.addWidget(QLabel("Interval"))
         side_layout.addWidget(self.interval_combo)
-
         side_layout.addStretch()
 
         side_widget = QWidget()
         side_widget.setLayout(side_layout)
         side_widget.setFixedWidth(70)
 
-        root_layout = QHBoxLayout()
-        root_layout.addWidget(self.editor, 1)
-        root_layout.addWidget(side_widget)
+        layout = QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.editor, 1)
+        layout.addWidget(side_widget)
 
-        self._drag_start_pos = None
-        title_bar = self.create_title_bar()
+        tab = QWidget()
+        tab.setLayout(layout)
 
-        main_layout = QVBoxLayout()
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
+        return tab
+    
+    def create_digital_twin_tab(self):
+        self.ip_edit = QLineEdit()
+        self.ip_edit.setText("127.0.0.1")
+        ip_layout = QFormLayout()
+        ip_layout.addRow("IP Address", self.ip_edit)
 
-        main_layout.addWidget(title_bar)
-        main_layout.addLayout(root_layout)
+        self.connect_button = QPushButton("Connect")
+        self.disconnect_button = QPushButton("Disconnect")
+        self.start_sync_button = QPushButton("Start Sync")
+        self.stop_sync_button = QPushButton("Stop Sync")
 
-        root = QWidget()
-        root.setLayout(main_layout)
+        self.connect_button.clicked.connect(self.connect_machine)
+        self.disconnect_button.clicked.connect(self.disconnect_machine)
+        self.start_sync_button.clicked.connect(self.start_machine_sync)
+        self.stop_sync_button.clicked.connect(self.stop_machine_sync)
 
-        self.setCentralWidget(root)
-        self.apply_dark_theme()
+        self.machine_interval_combo = QComboBox()
+        self.machine_interval_combo.addItems([
+            "50 ms",
+            "100 ms",
+            "200 ms",
+            "500 ms",
+            "1000 ms",
+        ])
+        self.machine_interval_combo.setCurrentText("200 ms")
 
-    def create_title_bar(self):
+        self.connection_status_label = QLabel("Disconnected")
+        self.machine_status_label = QLabel("Idle")
+        self.machine_axis_info = []
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(2)
+
+        layout.addLayout(ip_layout)
+        connect_layout = QHBoxLayout()
+        connect_layout.addWidget(self.connect_button)
+        connect_layout.addWidget(self.disconnect_button)
+        layout.addLayout(connect_layout)
+        sync_layout = QHBoxLayout()
+        sync_layout.addWidget(self.start_sync_button)
+        sync_layout.addWidget(self.stop_sync_button)
+        layout.addLayout(sync_layout)
+
+        layout.addSpacing(5)
+        layout.addWidget(QLabel("Polling Interval"))
+        layout.addWidget(self.machine_interval_combo)
+
+        layout.addSpacing(5)
+        status_layout = QGridLayout()
+        status_layout.addWidget(self.connection_status_label, 0, 0)
+        status_layout.addWidget(self.machine_status_label, 0, 1)
+        layout.addLayout(status_layout)
+
+        layout.addSpacing(5)
+        self.axis_table = QTableWidget()
+        self.axis_table.setColumnCount(4)
+        self.axis_table.setHorizontalHeaderLabels(
+            ["Name", "Type", "Path", "AxisNo / Signal"]
+        )
+
+        self.axis_table.verticalHeader().setVisible(False)
+        self.axis_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.axis_table.setSelectionMode(QTableWidget.NoSelection)
+        self.axis_table.setAlternatingRowColors(True)
+
+        self.axis_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeToContents
+        )
+        self.axis_table.horizontalHeader().setStretchLastSection(True)
+
+        layout.addWidget(QLabel("Axis Info"))
+        layout.addWidget(self.axis_table)
+
+        tab = QWidget()
+        tab.setLayout(layout)
+
+        return tab
+    
+    def on_tab_changed(self, index):
+        self.stop()
+        self.stop_machine_sync()
+    
+    def get_machine_interval_ms(self):
+        text = self.machine_interval_combo.currentText()
+        return int(text.replace(" ms", ""))
+
+    def connect_machine(self):
+        self.connection_status_label.setText("Connected")
+        ip_address = self.ip_edit.text().strip()
+
+        if not ip_address:
+            self.connection_status_label.setText("Invalid IP")
+            return
+        # TODO:
+        # FOCAS NC接続
+
+    def disconnect_machine(self):
+        # TODO:
+        # FOCAS NC接続切断
+        self.stop_machine_sync()
+        self.connection_status_label.setText("Disconnected")
+
+    def start_machine_sync(self):
+        self.stop()
+        interval_ms = self.get_machine_interval_ms()
+        self.machine_timer.start(interval_ms)
+        self.machine_status_label.setText("Syncing")
+
+    def stop_machine_sync(self):
+        self.machine_timer.stop()
+        self.machine_status_label.setText("Idle")
+
+    def poll_machine(self):
+        position = {}
+        try:
+            for axis_info in self.machine_axis_info:
+                name = axis_info["name"]
+                joint_type = axis_info["type"]
+                path = axis_info["path"]
+                axisno = axis_info["axisno"]
+                signal = axis_info["signal"]
+
+                if joint_type == "signal":
+                    value = self.read_machine_signal(signal)
+                else:
+                    value = self.read_machine_axis_position(path, axisno)
+
+                position[name] = value
+
+            self.update_machine_display(position)
+            self.send_position(position)
+
+        except Exception as e:
+            self.machine_status_label.setText(
+                f"Read Error: {e}"
+            )
+            self.stop_machine_sync()
+
+    def read_machine_axis_position(self, path, axisno):
+        if path is None or axisno is None:
+            return 0.0
+
+        # TODO:
+        # FOCASなどでNC座標を読む
+        #
+        # 例:
+        # value = self.focas_client.read_axis_position(
+        #     path=path,
+        #     axisno=axisno
+        # )
+        #
+        # return value
+
+        print(
+            f"Read Axis: path={path}, axisno={axisno}"
+        )
+
+        return 0.0
+    
+    def read_machine_signal(self, signal):
+        if signal is None:
+            return 0.0
+
+        # TODO:
+        # FOCAS PMCなどで信号を読む
+        #
+        # 例:
+        # value = self.focas_client.read_signal(signal)
+        #
+        # return 1.0 if value else 0.0
+
+        print(
+            f"Read Signal: signal={signal}"
+        )
+
+        return 0.0
+    
+    def update_machine_display(self, position):
+        self.x_label.setText(f"{position.get('X', 0.0):.4f}")
+        self.y_label.setText(f"{position.get('Y', 0.0):.4f}")
+        self.z_label.setText(f"{position.get('Z', 0.0):.4f}")
+
+        self.tool_label.setText(
+            "ON" if position.get("Tool", 0.0) else "OFF"
+        )
+
+        self.work_label.setText(
+            "ON" if position.get("Work", 0.0) else "OFF"
+        )
+
+    def update_axis_info(self, joint_info_list):
+        self.axis_table.setRowCount(0)
+        self.machine_axis_info = []
+
+        if not joint_info_list:
+            return
+
+        row_index = 0
+        for joint in joint_info_list:
+            node = joint.get("node")
+
+            if node is None or node.joint is None:
+                continue
+
+            joint_def = node.joint
+
+            name = joint.get("name", "")
+            joint_type = getattr(joint_def, "type", "")
+
+            path = getattr(joint_def, "path", None)
+            axisno = getattr(joint_def, "axisno", None)
+            signal = getattr(joint_def, "signal", None)
+
+            if path is None:
+                path = "-"
+
+            if joint_type == "signal":
+                target_info = signal if signal is not None else "-"
+            else:
+                target_info = axisno if axisno is not None else "-"
+            
+            self.machine_axis_info.append({
+                "name": name,
+                "type": joint_type,
+                "path": path,
+                "axisno": axisno,
+                "signal": signal,
+            })
+
+            self.axis_table.insertRow(row_index)
+            self.axis_table.setItem(row_index, 0, QTableWidgetItem(str(name)) )
+            self.axis_table.setItem(row_index, 1, QTableWidgetItem(str(joint_type)))
+            self.axis_table.setItem(row_index, 2, QTableWidgetItem(str(path)))
+            self.axis_table.setItem(row_index, 3, QTableWidgetItem(str(target_info)))
+            row_index += 1
+                
+    def create_title_bar(self, title_text):
         title_bar = QWidget()
         title_bar.setObjectName("TitleBar")
         title_bar.setFixedHeight(28)
@@ -289,7 +555,7 @@ class ProgramWindowQt(QMainWindow):
         layout.setContentsMargins(8, 0, 0, 0)
         layout.setSpacing(4)
 
-        title = QLabel("NC Program")
+        title = QLabel(title_text)
 
         close_button = QPushButton("✕")
         close_button.setObjectName("CloseButton")
@@ -557,6 +823,34 @@ class ProgramWindowQt(QMainWindow):
 
     def apply_dark_theme(self):
         self.setStyleSheet("""
+           QTabWidget::pane {
+                border: 1px solid #555555;
+                background-color: #232323;
+            }
+
+            QTabBar::tab {
+                background-color: #303030;
+                color: #aaaaaa;
+                padding: 2px 0px;
+                border: 1px solid #555555;
+                border-bottom: none;
+                min-width: 100px;
+            }
+
+            QTabBar::tab:selected {
+                background-color: #2d4b55;
+                color: white;
+                border-top: 2px solid #00d0ff;
+            }
+
+            QTabBar::tab:hover {
+                background-color: #0078d7;
+                color: white;
+            }
+
+            QTabBar::tab:!selected {
+                margin-top: 3px;
+            }
             QWidget#TitleBar {
                 background-color: #f3f3f3;
                 border-bottom: 1px solid #d0d0d0;
@@ -636,7 +930,7 @@ class ProgramWindowQt(QMainWindow):
 if __name__ == "__main__":
     app = QApplication([])
 
-    window = ProgramWindowQt()
+    window = MachinePanelQt()
     window.show()
 
     app.exec()

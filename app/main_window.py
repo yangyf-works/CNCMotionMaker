@@ -5,7 +5,7 @@ import open3d.visualization.gui as gui # type: ignore
 from app.scene_view import SceneView
 from app.control_panel import ControlPanel
 from app.axis_window import AxisControlWindow
-from app.program_window_qt import ProgramWindowQt
+from app.program_window_qt import MachinePanelQt
 from core.model_builder import collect_all_joint_info
 
 class MainWindow:
@@ -38,7 +38,7 @@ class MainWindow:
         self.axis_window = AxisControlWindow(
             on_joint_move=self.on_joint_move
         )
-        self.program_window = ProgramWindowQt(
+        self.program_window = MachinePanelQt(
             on_position_sample=self.apply_program_position
         )
         self.program_window.show()
@@ -74,19 +74,20 @@ class MainWindow:
         )
 
     def on_json_selected(self, json_path):
-
         print("Load JSON:", json_path)
         try:
-
             self.scene_view.load_json_model(json_path)
 
             joint_info = collect_all_joint_info(
                 self.scene_view.roots
             )
-            
             gui.Application.instance.post_to_main_thread(
                 self.axis_window.window,
                 lambda: self.axis_window.set_axis_info(joint_info)
+            )
+            gui.Application.instance.post_to_main_thread(
+                self.window,
+                lambda: self.program_window.update_axis_info(joint_info)
             )
         except Exception:
             traceback.print_exc()
