@@ -1,6 +1,6 @@
 from __future__ import annotations
 import math
-from PySide6.QtCore import Qt, QRect, QSize, QTimer, QPoint
+from PySide6.QtCore import Qt, QRect, QSize, QTimer
 from PySide6.QtGui import QColor, QFont, QPainter, QTextFormat
 from PySide6.QtWidgets import (
     QApplication,
@@ -235,6 +235,9 @@ class ProgramWindowQt(QMainWindow):
             button.setFixedHeight(26)
         
         self.interval_combo.setFixedHeight(24)
+        self.interval_combo.currentIndexChanged.connect(
+            self.on_interval_changed
+        )
 
         side_layout = QVBoxLayout()
         side_layout.setContentsMargins(0,0,0,0)
@@ -626,6 +629,9 @@ class ProgramWindowQt(QMainWindow):
         self.editor.setReadOnly(not editable)
         if editable:
             self.editor.highlight_current_line()
+    
+    def on_interval_changed(self, index):
+        self.stop()
 
 if __name__ == "__main__":
     app = QApplication([])
