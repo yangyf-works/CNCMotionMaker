@@ -312,8 +312,15 @@ class MachinePanelQt(QMainWindow):
     def create_digital_twin_tab(self):
         self.ip_edit = QLineEdit()
         self.ip_edit.setText("127.0.0.1")
-        ip_layout = QFormLayout()
-        ip_layout.addRow("IP Address", self.ip_edit)
+        self.port_edit = QLineEdit()
+        self.port_edit.setText("8193")
+        
+        IP_layout = QGridLayout()
+        IP_layout.addWidget(QLabel("IP Address"),0 ,0)
+        IP_layout.addWidget(self.ip_edit, 0, 1)
+        IP_layout.addWidget(QLabel("Port"),0 ,2)
+        IP_layout.addWidget(self.port_edit, 0, 3)
+        
 
         self.connect_button = QPushButton("Connect")
         self.disconnect_button = QPushButton("Disconnect")
@@ -343,7 +350,7 @@ class MachinePanelQt(QMainWindow):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(2)
 
-        layout.addLayout(ip_layout)
+        layout.addLayout(IP_layout)
         connect_layout = QHBoxLayout()
         connect_layout.addWidget(self.connect_button)
         connect_layout.addWidget(self.disconnect_button)
@@ -357,13 +364,13 @@ class MachinePanelQt(QMainWindow):
         layout.addWidget(QLabel("Polling Interval"))
         layout.addWidget(self.machine_interval_combo)
 
-        layout.addSpacing(5)
+        layout.addSpacing(6)
         status_layout = QGridLayout()
         status_layout.addWidget(self.connection_status_label, 0, 0)
         status_layout.addWidget(self.machine_status_label, 0, 1)
         layout.addLayout(status_layout)
 
-        layout.addSpacing(5)
+        layout.addSpacing(8)
         self.axis_table = QTableWidget()
         self.axis_table.setColumnCount(4)
         self.axis_table.setHorizontalHeaderLabels(
