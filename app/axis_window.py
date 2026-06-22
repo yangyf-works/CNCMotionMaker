@@ -90,6 +90,7 @@ class AxisControlWindow:
         self.override_plus_btn.vertical_padding_em = 0.1
 
         self.override_row.add_child(self.override_combo)
+        self.override_row.add_stretch()
         self.override_row.add_child(self.override_minus_btn)
         self.override_row.add_child(self.override_plus_btn)
 
@@ -140,7 +141,7 @@ class AxisControlWindow:
         gap = 2
         em = self.window.theme.font_size
 
-        left_w = int(10 * em)
+        left_w = int(10.5 * em)
         right_w = content.width - left_w - gap - margin * 2
 
         x = content.x + margin

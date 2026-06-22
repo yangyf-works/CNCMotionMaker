@@ -39,7 +39,8 @@ class MainWindow:
             on_joint_move=self.on_joint_move
         )
         self.program_window = MachinePanelQt(
-            on_position_sample=self.apply_program_position
+            on_position_sample=self.apply_program_position,
+            on_window_activated=self.raise_all_windows
         )
         self.program_window.show()
         self._move_sub_window()
@@ -146,4 +147,16 @@ class MainWindow:
             self.scene_view.window,
             self.scene_view.refresh_model
         )
-        
+    
+    def raise_all_windows(self):
+        # Qt Program window
+        if self.program_window is not None:
+            self.program_window.raise_()
+            self.program_window.activateWindow()
+
+        # Open3D sub windows
+        if self.axis_window is not None:
+            self.axis_window.window.show(True)
+
+        # Open3D main window
+        self.window.show(True)

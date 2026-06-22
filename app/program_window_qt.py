@@ -1,6 +1,6 @@
 from __future__ import annotations
 import math
-from PySide6.QtCore import Qt, QRect, QSize, QTimer
+from PySide6.QtCore import Qt, QRect, QSize, QTimer, QEvent
 from PySide6.QtGui import QColor, QFont, QPainter, QTextFormat
 from PySide6.QtWidgets import (
     QApplication,
@@ -189,9 +189,10 @@ class ProgramEditor(QPlainTextEdit):
         self.setExtraSelections(selections)
 
 class MachinePanelQt(QMainWindow):
-    def __init__(self, on_position_sample=None):
+    def __init__(self, on_position_sample=None, on_window_activated=None):
         super().__init__()
         self.on_position_sample = on_position_sample
+        self.on_window_activated = on_window_activated
 
         self.setWindowTitle("Machine Panel")
         self.resize(300, 720)
@@ -334,6 +335,7 @@ class MachinePanelQt(QMainWindow):
 
         self.machine_interval_combo = QComboBox()
         self.machine_interval_combo.addItems([
+            "10 ms",
             "50 ms",
             "100 ms",
             "200 ms",
@@ -351,24 +353,39 @@ class MachinePanelQt(QMainWindow):
         layout.setSpacing(2)
 
         layout.addLayout(IP_layout)
+
         connect_layout = QHBoxLayout()
-        connect_layout.addWidget(self.connect_button)
-        connect_layout.addWidget(self.disconnect_button)
+        left_layout = QHBoxLayout()
+        center_layout = QHBoxLayout()
+        right_layout = QHBoxLayout()
+        left_layout.addWidget(self.connect_button)
+        center_layout.addWidget(self.disconnect_button)
+        right_layout.addStretch()
+        right_layout.addWidget(self.connection_status_label)
+        connect_layout.addLayout(left_layout, 1)
+        connect_layout.addLayout(center_layout, 1)
+        connect_layout.addLayout(right_layout, 1)
+
         layout.addLayout(connect_layout)
+
         sync_layout = QHBoxLayout()
-        sync_layout.addWidget(self.start_sync_button)
-        sync_layout.addWidget(self.stop_sync_button)
+        left_layout = QHBoxLayout()
+        center_layout = QHBoxLayout()
+        right_layout = QHBoxLayout()
+        left_layout.addWidget(self.start_sync_button)
+        center_layout.addWidget(self.stop_sync_button)
+        right_layout.addStretch()
+        right_layout.addWidget(self.machine_status_label)
+        sync_layout.addLayout(left_layout, 1)
+        sync_layout.addLayout(center_layout, 1)
+        sync_layout.addLayout(right_layout, 1)
         layout.addLayout(sync_layout)
 
-        layout.addSpacing(5)
-        layout.addWidget(QLabel("Polling Interval"))
-        layout.addWidget(self.machine_interval_combo)
-
-        layout.addSpacing(6)
-        status_layout = QGridLayout()
-        status_layout.addWidget(self.connection_status_label, 0, 0)
-        status_layout.addWidget(self.machine_status_label, 0, 1)
-        layout.addLayout(status_layout)
+        layout.addSpacing(8)
+        polling_layout = QHBoxLayout()
+        polling_layout.addWidget(QLabel("Polling Interval"))
+        polling_layout.addWidget(self.machine_interval_combo)
+        layout.addLayout(polling_layout)
 
         layout.addSpacing(8)
         self.axis_table = QTableWidget()
@@ -446,7 +463,6 @@ class MachinePanelQt(QMainWindow):
 
                 position[name] = value
 
-            self.update_machine_display(position)
             self.send_position(position)
 
         except Exception as e:
@@ -493,19 +509,6 @@ class MachinePanelQt(QMainWindow):
         )
 
         return 0.0
-    
-    def update_machine_display(self, position):
-        self.x_label.setText(f"{position.get('X', 0.0):.4f}")
-        self.y_label.setText(f"{position.get('Y', 0.0):.4f}")
-        self.z_label.setText(f"{position.get('Z', 0.0):.4f}")
-
-        self.tool_label.setText(
-            "ON" if position.get("Tool", 0.0) else "OFF"
-        )
-
-        self.work_label.setText(
-            "ON" if position.get("Work", 0.0) else "OFF"
-        )
 
     def update_axis_info(self, joint_info_list):
         self.axis_table.setRowCount(0)
@@ -933,6 +936,13 @@ class MachinePanelQt(QMainWindow):
     
     def on_interval_changed(self, index):
         self.stop()
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+
+        if event.type() == QEvent.ActivationChange:
+            if self.isActiveWindow():
+                self.on_window_activated()
 
 if __name__ == "__main__":
     app = QApplication([])

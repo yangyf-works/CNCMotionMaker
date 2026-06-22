@@ -68,6 +68,7 @@ class SceneView:
         self.axis_material.line_width = 1.0
 
         self.show_axis = False
+        self.joint_axis_labels = []
 
     def _create_test_geometry(self):
         axis = o3d.geometry.TriangleMesh.create_coordinate_frame(
@@ -615,42 +616,51 @@ class SceneView:
                 continue
 
             color = self.get_joint_axis_color(joint)
+            label_text = joint.name if joint.name else node.name
 
             match joint.type:
                 case "rotate":
                     self.create_axis_line(
                         name=f"joint_axis_{node.name}",
+                        axistype=joint.type,
                         origin=origin,
                         direction=direction,
                         bbox=bbox,
                         color=color,
+                        label=label_text,
                     )
 
                 case "linear":
                     self.create_axis_line(
                         name=f"joint_axis_{node.name}_plus",
+                        axistype=joint.type,
                         origin=node.world_T[:3, 3],
                         direction=direction,
                         bbox=bbox,
                         color=color,
                         type="plusonly",
+                        label=f"-{label_text}",
                     )
+
                     self.create_axis_line(
                         name=f"joint_axis_{node.name}_minus",
+                        axistype=joint.type,
                         origin=node.world_T[:3, 3],
                         direction=direction,
                         bbox=bbox,
                         color=[1.0 - c for c in color],
                         type="minusonly",
+                        label=f"+{label_text}",
                     )
+
                 case "chain":
-                    self.draw_chain_axis(node, color)
-                    #self.show_chain_carriers(node)
+                    self.draw_chain_axis(node, color, label=label_text,)
 
                 case "signal":
                     continue
+
                 case _:
-                    continue            
+                    continue
 
     def clear_joint_axes(self):
         if not hasattr(self, "axis_geometry_names"):
@@ -661,7 +671,11 @@ class SceneView:
                 self.widget.scene.scene.remove_geometry(name)
 
         self.axis_geometry_names.clear()
-    
+
+        for label  in self.joint_axis_labels:
+            self.widget.remove_3d_label(label )
+        self.joint_axis_labels.clear()
+
     def get_joint_axis_info(self, node, joint):
         # 軸方向を取得
         axis = getattr(joint, "axis", None)
@@ -706,7 +720,7 @@ class SceneView:
 
         return (0.8, 0.8, 0.8)       # その他
     
-    def create_axis_line(self, origin, direction, bbox, color=(1, 0, 0), type="infinite", name=None):
+    def create_axis_line(self, axistype, origin, direction, bbox, color=(1, 0, 0), type="infinite", name=None, label=None,):
         origin = np.asarray(origin, dtype=float)
         direction = np.asarray(direction, dtype=float)
 
@@ -748,6 +762,13 @@ class SceneView:
             p1 = origin
             p2 = points[0][1]
 
+        if label is not None:
+            label_pos = p2
+            label = self.widget.add_3d_label(label_pos, label)
+            label.color = gui.Color(color[0], color[1], color[2], 1.0)
+
+            self.joint_axis_labels.append(label)
+
         line = o3d.geometry.LineSet()
         line.points = o3d.utility.Vector3dVector([p1, p2])
         line.lines = o3d.utility.Vector2iVector([[0, 1]])
@@ -761,6 +782,82 @@ class SceneView:
 
         self.axis_geometry_names.append(name)
 
+        if axistype == "rotate":
+            scene_size = np.linalg.norm(bbox.get_extent())
+            arc_radius = scene_size * 0.04
+
+            self.create_rotation_direction_arc(
+                name=f"joint_axis_{name}_rot_dir",
+                center=p2,
+                axis_dir=direction,
+                radius=arc_radius,
+                color=color,
+            )
+
+    def create_rotation_direction_arc(self, name, center, axis_dir, radius, color=(1, 0, 0), angle_deg=270, segments=48,):
+        center = np.asarray(center, dtype=float)
+        axis_dir = np.asarray(axis_dir, dtype=float)
+
+        norm = np.linalg.norm(axis_dir)
+        if norm == 0:
+            return
+
+        axis_dir = axis_dir / norm
+
+        # axis_dir に直交する2方向を作る
+        tmp = np.array([0.0, 0.0, 1.0])
+        if abs(np.dot(axis_dir, tmp)) > 0.9:
+            tmp = np.array([0.0, 1.0, 0.0])
+
+        u = np.cross(axis_dir, tmp)
+        u = u / np.linalg.norm(u)
+
+        v = np.cross(axis_dir, u)
+        v = v / np.linalg.norm(v)
+
+        angle_rad = np.deg2rad(angle_deg)
+
+        points = []
+        for i in range(segments + 1):
+            t = angle_rad * i / segments
+            p = center + radius * (np.cos(t) * u + np.sin(t) * v)
+            points.append(p)
+
+        lines = []
+        for i in range(len(points) - 1):
+            lines.append([i, i + 1])
+
+        # 矢印の先端っぽい2本線
+        end = points[-1]
+        prev = points[-2]
+        tangent = end - prev
+        tangent = tangent / np.linalg.norm(tangent)
+
+        arrow_len = radius * 0.5
+
+        arrow_p1 = end - tangent * arrow_len + u * arrow_len
+        arrow_p2 = end - tangent * arrow_len - u * arrow_len
+
+        base_index = len(points)
+        points.append(arrow_p1)
+        points.append(arrow_p2)
+
+        lines.append([base_index, len(points) - 3])
+        lines.append([base_index + 1, len(points) - 3])
+
+        line_set = o3d.geometry.LineSet()
+        line_set.points = o3d.utility.Vector3dVector(points)
+        line_set.lines = o3d.utility.Vector2iVector(lines)
+        line_set.colors = o3d.utility.Vector3dVector([color for _ in lines])
+
+        self.widget.scene.scene.add_geometry(
+            name,
+            line_set,
+            self.axis_material,
+        )
+
+        self.axis_geometry_names.append(name)
+        
     def get_scene_bbox(self):
         bboxes = []
 
@@ -812,7 +909,7 @@ class SceneView:
 
         return line_set
     
-    def draw_chain_axis(self, node, color):
+    def draw_chain_axis(self, node, color, label=None):
         joint = node.joint
 
         if joint is None or joint.type != "chain" or not joint.sprockets:
@@ -844,6 +941,25 @@ class SceneView:
             self.axis_material,
         )
         self.axis_geometry_names.append(geom_name)
+
+        label_text = label or joint.name or node.name
+
+        world_points = np.asarray(line_set.points)
+        if len(world_points) > 0:
+            label_pos = world_points.mean(axis=0)
+
+            axis_label = self.widget.add_3d_label(
+                label_pos,
+                label_text
+            )
+            axis_label.color = gui.Color(
+                color[0],
+                color[1],
+                color[2],
+                1.0
+            )
+
+            self.joint_axis_labels.append(axis_label)
     
     def show_chain_carriers(self, node):
         joint = node.joint
