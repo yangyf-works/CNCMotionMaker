@@ -714,7 +714,7 @@ class SceneView:
         if joint_type == "linear":
             return (0.2, 0.8, 1.0)   # 水色
         if joint_type == "rotate":
-            return (1.0, 0.8, 0.1)   # 黄色
+            return (1.0, 0.5, 0.0)   # オレンジ
         if joint_type == "chain":
             return (0.2, 0.8, 0.1)   # 緑
 
@@ -833,17 +833,18 @@ class SceneView:
         tangent = end - prev
         tangent = tangent / np.linalg.norm(tangent)
 
-        arrow_len = radius * 0.5
+        arrow_len = radius * 0.4
 
-        arrow_p1 = end - tangent * arrow_len + u * arrow_len
-        arrow_p2 = end - tangent * arrow_len - u * arrow_len
+        arrow_p1 = end - tangent * arrow_len + axis_dir * arrow_len
+        arrow_p2 = end - tangent * arrow_len - axis_dir * arrow_len
 
+        end_index = len(points) - 1
         base_index = len(points)
         points.append(arrow_p1)
         points.append(arrow_p2)
 
-        lines.append([base_index, len(points) - 3])
-        lines.append([base_index + 1, len(points) - 3])
+        lines.append([end_index, base_index])
+        lines.append([end_index, base_index + 1])
 
         line_set = o3d.geometry.LineSet()
         line_set.points = o3d.utility.Vector3dVector(points)

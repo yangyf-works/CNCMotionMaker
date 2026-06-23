@@ -59,13 +59,13 @@ class ProgramEditor(QPlainTextEdit):
         self.setFont(font)
 
         self.setPlainText(
-            "X1 Y2 Z1 F60\n"
+            "X1 Y2 Z1 B-90 F600\n"
             "Tool OFF\n"
             "WAIT 2.5\n"
-            "X-1 Y-1\n"
+            "X-1 Y-1 B30 F400\n"
             "Work ON\n"
-            "Y0 Z2 F12\n"
-            "Z-2 F20"
+            "Y0 Z2 B45 C90 F300\n"
+            "Z-2 F200"
         )
 
     def line_number_area_width(self):
@@ -936,13 +936,6 @@ class MachinePanelQt(QMainWindow):
     
     def on_interval_changed(self, index):
         self.stop()
-
-    def changeEvent(self, event):
-        super().changeEvent(event)
-
-        if event.type() == QEvent.ActivationChange:
-            if self.isActiveWindow():
-                self.on_window_activated()
 
 if __name__ == "__main__":
     app = QApplication([])

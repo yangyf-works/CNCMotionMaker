@@ -4,10 +4,11 @@ import open3d.visualization.gui as gui # type: ignore
 
 class ControlPanel:
 
-    def __init__(self, json_dir: Path, on_json_selected):
+    def __init__(self, json_dir: Path, on_json_selected, on_toggle_panel):
 
         self.json_dir = json_dir
         self.on_json_selected = on_json_selected
+        self.on_toggle_panel = on_toggle_panel
 
         self.json_files = self._find_json_files()
 
@@ -16,11 +17,16 @@ class ControlPanel:
             gui.Margins(5, 5, 1, 5)
         )
 
+        self.toggle_button = gui.Button(">>")
+        self.toggle_button.horizontal_padding_em = 0.2
+        self.toggle_button.vertical_padding_em = 0.1
+        self.toggle_button.set_on_clicked(self._on_toggle_clicked)
+
+        self.widget.add_child(self.toggle_button)
+
         title = gui.Label("Model select")
         self.widget.add_child(title)
-
         self.json_combo = gui.Combobox()
-
         if self.json_files:
             for path in self.json_files:
                 self.json_combo.add_item(path.name)
@@ -30,16 +36,28 @@ class ControlPanel:
         self.json_combo.set_on_selection_changed(
             self._on_combo_changed
         )
-
         self.widget.add_child(self.json_combo)
 
-        load_button = gui.Button("Load Model")
-        load_button.horizontal_padding_em = 0.2
-        load_button.vertical_padding_em = 0.1
-        load_button.set_on_clicked(self._on_load_clicked)
+        self.load_button = gui.Button("Load Model")
+        self.load_button.horizontal_padding_em = 0.2
+        self.load_button.vertical_padding_em = 0.1
+        self.load_button.set_on_clicked(self._on_load_clicked)
 
-        self.widget.add_child(load_button)
+        self.widget.add_child(self.load_button)
         self._add_manual()
+
+    def _on_toggle_clicked(self):
+        self.on_toggle_panel()
+        
+        if self.toggle_button.text == ">>":
+            self.toggle_button.text = "<"
+            for child in self.widget.get_children():
+                if child is not self.toggle_button:
+                    child.visible = False
+        else:
+            self.toggle_button.text = ">>"
+            for child in self.widget.get_children():
+                child.visible = True
 
     def _find_json_files(self):
 
@@ -110,11 +128,11 @@ class ControlPanel:
     def _create_manual_table(self, title, rows):
         manual_box = gui.CollapsableVert(
             title,
-            2,
-            gui.Margins(2, 5, 0, 0)
+            1,
+            gui.Margins(2, 0, 0, 0)
         )
 
-        table = gui.Horiz(1)
+        table = gui.Horiz(0)
 
         operation_col = gui.Vert(0)
         description_col = gui.Vert(0)

@@ -13,9 +13,10 @@ class MainWindow:
     def __init__(self):
         self.window = gui.Application.instance.create_window(
             "CNCMotionMaker",
-            1280,
+            1080,
             720
         )
+        self.control_panel_collapsed = False
 
         self.scene_view = SceneView(self.window)
 
@@ -24,7 +25,8 @@ class MainWindow:
 
         self.control_panel = ControlPanel(
             json_dir=json_dir,
-            on_json_selected=self.on_json_selected
+            on_json_selected=self.on_json_selected,
+            on_toggle_panel=self.toggle_control_panel            
         )
 
         self.window.add_child(self.scene_view.widget)
@@ -50,6 +52,10 @@ class MainWindow:
             self._initial_refresh
         )
 
+    def toggle_control_panel(self):
+        self.control_panel_collapsed = not self.control_panel_collapsed
+        self.window.set_needs_layout()
+
     def _initial_refresh(self):
         self.window.set_needs_layout()
         self.scene_view.widget.force_redraw()
@@ -58,7 +64,11 @@ class MainWindow:
 
         rect = self.window.content_rect
         em = self.window.theme.font_size
-        panel_width = int(10 * em)
+
+        if self.control_panel_collapsed:
+            panel_width = int(1.0 * em)
+        else:
+            panel_width = int(10 * em)
 
         self.scene_view.widget.frame = gui.Rect(
             rect.x,
@@ -149,11 +159,6 @@ class MainWindow:
         )
     
     def raise_all_windows(self):
-        # Qt Program window
-        if self.program_window is not None:
-            self.program_window.raise_()
-            self.program_window.activateWindow()
-
         # Open3D sub windows
         if self.axis_window is not None:
             self.axis_window.window.show(True)
