@@ -57,7 +57,6 @@ class SceneView:
         )
         
         self.default_sun_dir = self.cur_sun_dir.copy()
-        self.camera_fov = 45.0
         self.camera_fov_step = 5.0
         self.camera_pan_step = 10.0
         self._init_key_state()
@@ -144,8 +143,8 @@ class SceneView:
             gui.KeyName.L: self.on_reset_light,
             gui.KeyName.UP: lambda: self.on_camera_zoom(+1),
             gui.KeyName.DOWN: lambda: self.on_camera_zoom(-1),
-            gui.KeyName.LEFT: lambda: self.set_camera_fov(self.camera_fov - self.camera_fov_step),
-            gui.KeyName.RIGHT:lambda: self.set_camera_fov(self.camera_fov + self.camera_fov_step),
+            gui.KeyName.LEFT: lambda: self.set_camera_fov(-self.camera_fov_step),
+            gui.KeyName.RIGHT:lambda: self.set_camera_fov(self.camera_fov_step),
         }
         shiftkeymap = {
         }
@@ -416,8 +415,9 @@ class SceneView:
         up = model[:3, 1]
         center = np.asarray(self.widget.center_of_rotation)
 
-        old_fov = self.camera_fov
-        new_fov = max(1.0, min(90.0, float(fov_deg)))
+        old_fov = self.widget.scene.camera.get_field_of_view()
+        fov_deg += old_fov
+        new_fov = max(5.0, min(90.0, float(fov_deg)))
 
         view_vec = eye - center
         old_dist = np.linalg.norm(view_vec)
@@ -433,12 +433,10 @@ class SceneView:
         new_dist = old_dist * math.tan(old_rad / 2.0) / math.tan(new_rad / 2.0)
         new_eye = center + view_dir * new_dist
 
-        self.camera_fov = new_fov
-
         bounds = self.widget.scene.bounding_box
 
         self.widget.setup_camera(
-            self.camera_fov,
+            new_fov,
             bounds,
             center
         )
@@ -446,7 +444,7 @@ class SceneView:
         self.widget.look_at(center, new_eye, up)
         self.widget.force_redraw()
 
-        print(f"Camera FOV: {self.camera_fov:.1f}, distance: {new_dist:.1f}")
+        print(f"Camera FOV: {new_fov:.1f}, distance: {new_dist:.1f}")
     
     def on_camera_pan(self, dx, dy):
         dx_px = -dx * self.camera_pan_step
@@ -486,7 +484,7 @@ class SceneView:
         if height <= 0:
             return
 
-        fov_rad = math.radians(self.camera_fov)
+        fov_rad = math.radians(self.widget.scene.camera.get_field_of_view())
 
         # centerまでの距離で、画面1pxがワールドで何mm相当か計算
         view_height_world = 2.0 * dist * math.tan(fov_rad / 2.0)

@@ -13,7 +13,7 @@ class MainWindow:
     def __init__(self):
         self.window = gui.Application.instance.create_window(
             "CNCMotionMaker",
-            1080,
+            1000,
             720
         )
         self.control_panel_collapsed = False

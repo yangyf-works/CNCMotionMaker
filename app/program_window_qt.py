@@ -61,7 +61,7 @@ class ProgramEditor(QPlainTextEdit):
         self.setPlainText(
             "X1 Y2 Z1 B-90 F600\n"
             "Tool OFF\n"
-            "WAIT 2.5\n"
+            "WAIT 1.5\n"
             "X-1 Y-1 B30 F400\n"
             "Work ON\n"
             "Y0 Z2 B45 C90 F300\n"
