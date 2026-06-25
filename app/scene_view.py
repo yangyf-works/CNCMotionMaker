@@ -636,7 +636,7 @@ class SceneView:
                         direction=direction,
                         bbox=bbox,
                         color=color,
-                        type="plusonly",
+                        type="minusonly",
                         label=f"-{label_text}",
                     )
 
@@ -647,7 +647,7 @@ class SceneView:
                         direction=direction,
                         bbox=bbox,
                         color=[1.0 - c for c in color],
-                        type="minusonly",
+                        type="plusonly",
                         label=f"+{label_text}",
                     )
 

@@ -111,7 +111,7 @@ class MainWindow:
         )
 
     def _move_sub_window(self):
-        window_gap = 5
+        window_gap = 0
         main_rect = self.window.os_frame
 
         axis_rect = self.axis_window.window.os_frame

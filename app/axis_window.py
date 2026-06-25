@@ -95,7 +95,7 @@ class AxisControlWindow:
         self.override_row.add_child(self.override_plus_btn)
 
         self.motion_panel.add_child(self.override_row)
-        separator = gui.Label("=" *18)
+        separator = gui.Label("=" *20)
         self.motion_panel.add_child(separator)
         self._setting_axis_info = False
         
@@ -141,7 +141,7 @@ class AxisControlWindow:
         gap = 2
         em = self.window.theme.font_size
 
-        left_w = int(10.5 * em)
+        left_w = int(11 * em)
         right_w = content.width - left_w - gap - margin * 2
 
         x = content.x + margin

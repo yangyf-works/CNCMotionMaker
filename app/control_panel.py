@@ -17,7 +17,8 @@ class ControlPanel:
             gui.Margins(5, 5, 1, 5)
         )
 
-        self.toggle_button = gui.Button(">>")
+        self.fold_status = False
+        self.toggle_button = gui.Button(">>>")
         self.toggle_button.horizontal_padding_em = 0.2
         self.toggle_button.vertical_padding_em = 0.1
         self.toggle_button.set_on_clicked(self._on_toggle_clicked)
@@ -48,14 +49,15 @@ class ControlPanel:
 
     def _on_toggle_clicked(self):
         self.on_toggle_panel()
-        
-        if self.toggle_button.text == ">>":
+        self.fold_status = not self.fold_status
+
+        if self.fold_status:
             self.toggle_button.text = "<"
             for child in self.widget.get_children():
                 if child is not self.toggle_button:
                     child.visible = False
         else:
-            self.toggle_button.text = ">>"
+            self.toggle_button.text = ">>>"
             for child in self.widget.get_children():
                 child.visible = True
 
