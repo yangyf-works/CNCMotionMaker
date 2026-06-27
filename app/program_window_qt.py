@@ -316,22 +316,16 @@ class MachinePanelQt(QMainWindow):
         self.port_edit = QLineEdit()
         self.port_edit.setText("8193")
         
-        IP_layout = QGridLayout()
-        IP_layout.addWidget(QLabel("IP Address"),0 ,0)
-        IP_layout.addWidget(self.ip_edit, 0, 1)
-        IP_layout.addWidget(QLabel("Port"),0 ,2)
-        IP_layout.addWidget(self.port_edit, 0, 3)
-        
+        self.connect_toggle_button = QPushButton("Connect")
+        self.sync_toggle_button = QPushButton("Start Sync")
 
-        self.connect_button = QPushButton("Connect")
-        self.disconnect_button = QPushButton("Disconnect")
-        self.start_sync_button = QPushButton("Start Sync")
-        self.stop_sync_button = QPushButton("Stop Sync")
-
-        self.connect_button.clicked.connect(self.connect_machine)
-        self.disconnect_button.clicked.connect(self.disconnect_machine)
-        self.start_sync_button.clicked.connect(self.start_machine_sync)
-        self.stop_sync_button.clicked.connect(self.stop_machine_sync)
+        self.connect_toggle_button.clicked.connect(
+            self.toggle_machine_connection
+        )
+        self.sync_toggle_button.clicked.connect(
+            self.toggle_machine_sync
+        )
+        self.sync_toggle_button.setEnabled(False)
 
         self.machine_interval_combo = QComboBox()
         self.machine_interval_combo.addItems([
@@ -352,46 +346,38 @@ class MachinePanelQt(QMainWindow):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(2)
 
-        layout.addLayout(IP_layout)
+        self.ip_edit.setMinimumWidth(95)
+        self.port_edit.setFixedWidth(45)
+        network_layout = QHBoxLayout()
+        network_layout.addWidget(QLabel("IP"))
+        network_layout.addWidget(self.ip_edit)
+        network_layout.addWidget(QLabel("Port"))
+        network_layout.addWidget(self.port_edit)
+        network_layout.addWidget(QLabel("Polling"))
+        network_layout.addWidget(self.machine_interval_combo)
+        layout.addLayout(network_layout)
+        layout.addSpacing(4)
 
         connect_layout = QHBoxLayout()
-        left_layout = QHBoxLayout()
-        center_layout = QHBoxLayout()
-        right_layout = QHBoxLayout()
-        left_layout.addWidget(self.connect_button)
-        center_layout.addWidget(self.disconnect_button)
-        right_layout.addStretch()
-        right_layout.addWidget(self.connection_status_label)
-        connect_layout.addLayout(left_layout, 1)
-        connect_layout.addLayout(center_layout, 1)
-        connect_layout.addLayout(right_layout, 1)
-
+        connect_layout.addWidget(self.connect_toggle_button)
+        connect_layout.addWidget(self.sync_toggle_button)
         layout.addLayout(connect_layout)
+        layout.addSpacing(4)
 
-        sync_layout = QHBoxLayout()
-        left_layout = QHBoxLayout()
-        center_layout = QHBoxLayout()
-        right_layout = QHBoxLayout()
-        left_layout.addWidget(self.start_sync_button)
-        center_layout.addWidget(self.stop_sync_button)
-        right_layout.addStretch()
-        right_layout.addWidget(self.machine_status_label)
-        sync_layout.addLayout(left_layout, 1)
-        sync_layout.addLayout(center_layout, 1)
-        sync_layout.addLayout(right_layout, 1)
-        layout.addLayout(sync_layout)
+        status_layout = QHBoxLayout()
+        status_layout.addWidget(QLabel("Status: "))
+        status_layout.addSpacing(8)
+        status_layout.addWidget(self.connection_status_label)
+        status_layout.addSpacing(16)
+        status_layout.addWidget(self.machine_status_label)
+        status_layout.addStretch()
+        layout.addLayout(status_layout)
+        layout.addSpacing(4)
 
-        layout.addSpacing(8)
-        polling_layout = QHBoxLayout()
-        polling_layout.addWidget(QLabel("Polling Interval"))
-        polling_layout.addWidget(self.machine_interval_combo)
-        layout.addLayout(polling_layout)
-
-        layout.addSpacing(8)
         self.axis_table = QTableWidget()
         self.axis_table.setColumnCount(4)
         self.axis_table.setHorizontalHeaderLabels(
-            ["Name", "Type", "Path", "AxisNo / Signal"]
+            ["Name", "Type", "Path", "No/Signal"]
         )
 
         self.axis_table.verticalHeader().setVisible(False)
@@ -400,11 +386,11 @@ class MachinePanelQt(QMainWindow):
         self.axis_table.setAlternatingRowColors(True)
 
         self.axis_table.horizontalHeader().setSectionResizeMode(
-            QHeaderView.ResizeToContents
+                QHeaderView.Stretch
         )
-        self.axis_table.horizontalHeader().setStretchLastSection(True)
+        self.axis_table.horizontalHeader().setStretchLastSection(False)
 
-        layout.addWidget(QLabel("Axis Info"))
+        layout.addWidget(QLabel("Axis Info: "))
         layout.addWidget(self.axis_table)
 
         tab = QWidget()
@@ -412,39 +398,78 @@ class MachinePanelQt(QMainWindow):
 
         return tab
     
+    def is_machine_connected(self):
+        return self.connection_status_label.text() == "Connected"
+
+    def toggle_machine_connection(self):
+        if self.is_machine_connected():
+            self.disconnect_machine()
+        else:
+            self.connect_machine()
+
+    def toggle_machine_sync(self):
+        if self.machine_timer.isActive():
+            self.stop_machine_sync()
+        else:
+            self.start_machine_sync()
+            
     def on_tab_changed(self, index):
-        self.stop()
-        self.stop_machine_sync()
+        if index != 0:
+            self.stop()
+        if index != 1 and self.is_machine_connected():
+            self.disconnect_machine()
     
     def get_machine_interval_ms(self):
         text = self.machine_interval_combo.currentText()
         return int(text.replace(" ms", ""))
 
     def connect_machine(self):
-        self.connection_status_label.setText("Connected")
         ip_address = self.ip_edit.text().strip()
 
         if not ip_address:
             self.connection_status_label.setText("Invalid IP")
             return
+
         # TODO:
         # FOCAS NC接続
 
+        self.connection_status_label.setText("Connected")
+        self.connect_toggle_button.setText("Disconnect")
+        self.sync_toggle_button.setEnabled(True)
+        self.ip_edit.setEnabled(False)
+        self.port_edit.setEnabled(False)
+
     def disconnect_machine(self):
+        self.stop_machine_sync()
+
         # TODO:
         # FOCAS NC接続切断
-        self.stop_machine_sync()
+
         self.connection_status_label.setText("Disconnected")
+        self.connect_toggle_button.setText("Connect")
+        self.sync_toggle_button.setEnabled(False)
+        self.ip_edit.setEnabled(True)
+        self.port_edit.setEnabled(True)
 
     def start_machine_sync(self):
+        if not self.is_machine_connected():
+            self.machine_status_label.setText("Not Connected")
+            return
+
         self.stop()
+
         interval_ms = self.get_machine_interval_ms()
         self.machine_timer.start(interval_ms)
+
         self.machine_status_label.setText("Syncing")
+        self.sync_toggle_button.setText("Stop Sync")
+        self.machine_interval_combo.setEnabled(False)
 
     def stop_machine_sync(self):
         self.machine_timer.stop()
         self.machine_status_label.setText("Idle")
+        self.sync_toggle_button.setText("Start Sync")
+        self.machine_interval_combo.setEnabled(True)
 
     def poll_machine(self):
         position = {}
@@ -833,6 +858,24 @@ class MachinePanelQt(QMainWindow):
 
     def apply_dark_theme(self):
         self.setStyleSheet("""
+            QTableWidget {
+                background-color: #1e1e1e;
+                color: white;
+                gridline-color: #555555;
+                border: 1px solid #555555;
+                alternate-background-color: #2a2a2a;
+            }
+
+            QHeaderView::section {
+                background-color: #3a3a3a;
+                color: white;
+                border: 1px solid #666666;
+                padding: 1px;
+            }
+
+            QTableWidget::item {
+                padding: 1px;
+            }
            QTabWidget::pane {
                 border: 1px solid #555555;
                 background-color: #232323;
