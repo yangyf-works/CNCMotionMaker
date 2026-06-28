@@ -194,11 +194,9 @@ class MachinePanelQt(QMainWindow):
         super().__init__()
         self.on_position_sample = on_position_sample
 
-        title_bar = TitleBar(self ,"Machine Panel", on_close=self.on_close_clicked)
+        title_bar = TitleBar(self ,"Machine Panel")
         self.resize(300, 720)
-        self.setWindowFlags(
-            Qt.WindowType.FramelessWindowHint
-        )
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowStaysOnTopHint)
 
         self.samples = []
         self.sample_index = 0

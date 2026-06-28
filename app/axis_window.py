@@ -36,11 +36,11 @@ class AxisControlWindowQt(QWidget):
         self.signal_joints = []
         self.motion_axis_rows = []
         self.signal_axis_rows = []
-        self.button_size = 26
+        self.button_size = 20
 
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.resize(300, 720)
-        title_bar = TitleBar(self, "Joint Panel", on_close=self.on_close_clicked)
+        title_bar = TitleBar(self, "Joint Panel", True)
 
         self.content_widget = QWidget()
         self.create_content_ui(self.content_widget)
@@ -58,9 +58,6 @@ class AxisControlWindowQt(QWidget):
         self._repeat_amount = 0.0
 
         apply_common_dark_theme(self)
-    
-    def on_close_clicked(self):
-        pass
     
     def create_content_ui(self, parent):
         root_layout = QHBoxLayout(parent)
@@ -169,7 +166,7 @@ class AxisControlWindowQt(QWidget):
 
             name_label = QLabel("")
             name_label.setFixedWidth(28)
-            name_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            name_label.setAlignment(Qt.AlignLeft  | Qt.AlignVCenter)
 
             value_edit = QLineEdit()
             value_edit.setAlignment(Qt.AlignRight)
@@ -226,9 +223,6 @@ class AxisControlWindowQt(QWidget):
             name_counts[base_name] = count + 1
 
             display_name = base_name if count == 0 else f"{base_name}{count}"
-
-            if len(display_name) == 1:
-                display_name = "  " + display_name
 
             r["label"].setText(display_name)
 

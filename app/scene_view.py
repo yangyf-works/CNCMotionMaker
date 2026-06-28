@@ -35,7 +35,6 @@ class SceneView:
         self.material.shader = "defaultLit"
         
         self.widget.scene.set_background([0, 0, 0, 1])
-        
         self.widget.scene.scene.enable_sun_light(True)
 
         self.geometry_names = []

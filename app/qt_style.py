@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
 
 
 class TitleBar(QWidget):
-    def __init__(self, parent, title_text, on_close=None,):
+    def __init__(self, parent, title_text, show_close=False,):
         super().__init__(parent)
 
         self.parent_window = parent
@@ -24,17 +24,15 @@ class TitleBar(QWidget):
 
         self.title_label = QLabel(title_text)
 
-        self.close_button = QPushButton("✕")
-        self.close_button.setObjectName("CloseButton")
-        self.close_button.setFixedSize(30, 30)
-        if on_close is None:
-            self.close_button.clicked.connect(parent.close)
-        else:
-            self.close_button.clicked.connect(on_close)
-
         layout.addWidget(self.title_label)
-        layout.addStretch()
-        layout.addWidget(self.close_button)
+        if show_close:
+            self.close_button = QPushButton("✕")
+            self.close_button.setObjectName("CloseButton")
+            self.close_button.setFixedSize(30, 30)
+            self.close_button.clicked.connect(parent.close)
+
+            layout.addStretch()
+            layout.addWidget(self.close_button)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
