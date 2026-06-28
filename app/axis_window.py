@@ -1,4 +1,16 @@
-import open3d.visualization.gui as gui # type: ignore
+from PySide6.QtWidgets import (
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QComboBox,
+    QCheckBox,
+    QLineEdit,
+    QFrame
+)
+from PySide6.QtCore import Qt, QTimer
+from app.qt_style import apply_common_dark_theme, TitleBar
 
 override_items = [
     ("x0.0001", 0.0001),
@@ -6,109 +18,359 @@ override_items = [
     ("x0.01", 0.01),
     ("x0.1", 0.1),
     ("x1", 1.0),
-    ("x5", 5.0),
     ("x10", 10.0),
     ("x100", 100.0),
 ]
 
-class AxisControlWindow:
-
+class AxisControlWindowQt(QWidget):
     def __init__(self, on_joint_move):
+        super().__init__()
+
         self.on_joint_move = on_joint_move
-        app = gui.Application.instance
-        em = app.menubar_theme.font_size if hasattr(app, "menubar_theme") else 16
+        self._setting_axis_info = False
 
-        self.window = app.create_window(
-            "Joint Control",
-            int(28 * em),
-            720
-        )
-
-        self.motion_panel = gui.Vert(
-            5,
-            gui.Margins(10, 10, 10, 10)
-        )
-        self.signal_panel = gui.Vert(
-            5,
-            gui.Margins(10, 10, 0, 10)
-        )
-        self.window.add_child(self.motion_panel)
-        self.window.add_child(self.signal_panel)
-        self.window.set_on_layout(self._on_layout)
-        self.allow_close = False
-        self.window.set_on_close(self._on_close)
-
-        #
-        # タイトル
-        #
-        self.motion_panel.add_child(
-            gui.Label("[Motion Axis]")
-        )
-        self.jog_override_index = 4  # x1
+        self.jog_override_index = 4
         self.jog_override = override_items[self.jog_override_index][1]
 
-        self.motion_panel.add_child(gui.Label("Override"))
-        self.signal_panel.add_child(
-            gui.Label("[Signal]")
-        )
+        self.motion_joints = []
+        self.signal_joints = []
+        self.motion_axis_rows = []
+        self.signal_axis_rows = []
+        self.button_size = 26
 
-        self.override_row = gui.Horiz(5)
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+        self.resize(300, 720)
+        title_bar = TitleBar(self, "Joint Panel", on_close=self.on_close_clicked)
 
-        self.override_minus_btn = gui.Button("-")
-        self.override_plus_btn = gui.Button("+")
-        self.override_combo = gui.Combobox()
+        self.content_widget = QWidget()
+        self.create_content_ui(self.content_widget)
 
-        # ボタンを小さめにする
-        self.override_minus_btn.horizontal_padding_em = 0.2
-        self.override_minus_btn.vertical_padding_em = 0.1
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        main_layout.addWidget(title_bar)
+        main_layout.addWidget(self.content_widget)
 
-        self.override_plus_btn.horizontal_padding_em = 0.2
-        self.override_plus_btn.vertical_padding_em = 0.1
+        self.jog_timer = QTimer(self)
+        self.jog_timer.timeout.connect(self._repeat_jog)
+        self._repeat_joint = None
+        self._repeat_row = None
+        self._repeat_amount = 0.0
 
+        apply_common_dark_theme(self)
+    
+    def on_close_clicked(self):
+        pass
+    
+    def create_content_ui(self, parent):
+        root_layout = QHBoxLayout(parent)
+        root_layout.setContentsMargins(8, 8, 8, 8)
+        root_layout.setSpacing(4)
+
+        self.motion_panel = QWidget()
+        self.motion_layout = QVBoxLayout(self.motion_panel)
+        self.motion_layout.setContentsMargins(0, 0, 0, 0)
+        self.motion_layout.setSpacing(5)
+
+        self.signal_panel = QWidget()
+        self.signal_layout = QVBoxLayout(self.signal_panel)
+        self.signal_layout.setContentsMargins(0, 0, 0, 0)
+        self.signal_layout.setSpacing(5)
+
+        self._build_motion_panel_header()
+        self._build_signal_panel_header()
+        self.motion_layout.addStretch()
+        self.signal_layout.addStretch()
+
+        root_layout.addWidget(self.motion_panel, 1)
+        
+        separator = QFrame()
+        separator.setFrameShape(QFrame.VLine)
+        separator.setFrameShadow(QFrame.Plain)
+        separator.setLineWidth(1)
+        root_layout.addWidget(separator)
+        root_layout.addWidget(self.signal_panel, 1)
+
+    def _build_motion_panel_header(self):
+        self.motion_layout.addWidget(QLabel("[Motion Axis]"))
+
+        override_row = QHBoxLayout()
+        override_row.setContentsMargins(0, 0, 0, 0)
+        override_row.setSpacing(2)
+        override_row.addWidget(QLabel("Override"))
+
+        self.override_combo = QComboBox()
         for text, value in override_items:
-            self.override_combo.add_item(f"{text:<16}")
+            self.override_combo.addItem(text)
 
-        self.override_combo.selected_index = self.jog_override_index
-
-        self.override_combo.set_on_selection_changed(
+        self.override_combo.setCurrentIndex(self.jog_override_index)
+        self.override_combo.currentIndexChanged.connect(
             self._on_override_changed
         )
 
-        self.override_minus_btn.set_on_clicked(
-            self._on_override_minus
+        self.override_minus_btn = QPushButton("-")
+        self.override_plus_btn = QPushButton("+")
+        self.override_minus_btn.setFixedSize(self.button_size, self.button_size)
+        self.override_plus_btn.setFixedSize(self.button_size, self.button_size)
+
+        self.override_minus_btn.clicked.connect(self._on_override_minus)
+        self.override_plus_btn.clicked.connect(self._on_override_plus)
+
+        override_row.addWidget(self.override_combo)
+        override_row.addStretch()
+        override_row.addWidget(self.override_minus_btn)
+        override_row.addWidget(self.override_plus_btn)
+        self.motion_layout.addLayout(override_row)
+
+        separator = QFrame()
+        separator.setFrameShape(QFrame.HLine)
+        separator.setFrameShadow(QFrame.Plain)
+        self.motion_layout.addWidget(separator)
+
+    def _build_signal_panel_header(self):
+        self.signal_layout.addWidget(QLabel("[Signal]"))
+        separator = QFrame()
+        separator.setFrameShape(QFrame.HLine)
+        separator.setFrameShadow(QFrame.Plain)
+        self.signal_layout.addWidget(separator)
+
+    def set_axis_info(self, joint_info_list):
+        self._setting_axis_info = True
+
+        signal_joints = []
+        motion_joints = []
+
+        for joint in joint_info_list:
+            node = joint.get("node")
+
+            if node is None or node.joint is None:
+                continue
+
+            joint_def = node.joint
+            joint_type = getattr(joint_def, "type", "")
+
+            if joint_type == "signal":
+                signal_joints.append(joint)
+            else:
+                motion_joints.append(joint)
+
+        try:
+            self.set_motion_axis_info(motion_joints)
+            self.set_signal_axis_info(signal_joints)
+        finally:
+            self._setting_axis_info = False
+
+    def set_motion_axis_info(self, joint_info_list):
+        while len(self.motion_axis_rows) < len(joint_info_list):
+            row_widget = QWidget()
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(2)
+
+            name_label = QLabel("")
+            name_label.setFixedWidth(28)
+            name_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+            value_edit = QLineEdit()
+            value_edit.setAlignment(Qt.AlignRight)
+            value_edit.setFixedWidth(80)
+            value_edit.setText(self._value_format(0))
+
+            minus_btn = QPushButton("-")
+            plus_btn = QPushButton("+")
+            minus_btn.setFixedSize(self.button_size, self.button_size)
+            plus_btn.setFixedSize(self.button_size, self.button_size)
+
+            row_dict = {
+                "row": row_widget,
+                "label": name_label,
+                "value": value_edit,
+                "minus": minus_btn,
+                "plus": plus_btn,
+                "joint": None,
+                "connected": False,
+            }
+
+            value_edit.editingFinished.connect(
+                lambda row=row_dict:
+                    self._apply_value_text(
+                        row,
+                        row["value"].text()
+                    )
+            )
+
+            row_layout.addWidget(name_label)
+            row_layout.addStretch()
+            row_layout.addWidget(value_edit)
+            row_layout.addWidget(minus_btn)
+            row_layout.addWidget(plus_btn)
+
+            row_widget.setVisible(False)
+            insert_index = self.motion_layout.count() - 1
+            self.motion_layout.insertWidget(insert_index, row_widget)
+            self.motion_axis_rows.append(row_dict)
+
+        name_counts = {}
+
+        for r in self.motion_axis_rows:
+            r["row"].setVisible(False)
+            r["joint"] = None
+
+        for i, joint in enumerate(joint_info_list):
+            r = self.motion_axis_rows[i]
+
+            r["joint"] = joint
+
+            base_name = joint.get("name", "")
+            count = name_counts.get(base_name, 0)
+            name_counts[base_name] = count + 1
+
+            display_name = base_name if count == 0 else f"{base_name}{count}"
+
+            if len(display_name) == 1:
+                display_name = "  " + display_name
+
+            r["label"].setText(display_name)
+
+            node = joint.get("node")
+            if node is None:
+                continue
+
+            current_value = node.joint_value
+
+            r["value"].setText(self._value_format(current_value))
+            r["row"].setVisible(True)
+
+            if r["connected"]:
+                r["minus"].pressed.disconnect()
+                r["minus"].released.disconnect()
+                r["plus"].pressed.disconnect()
+                r["plus"].released.disconnect()
+
+            r["minus"].pressed.connect(
+                lambda j=joint, row=r:
+                    self._start_repeat_jog(
+                        j,
+                        row,
+                        -self.jog_override
+                    )
+            )
+
+            r["minus"].released.connect(
+                self._stop_repeat_jog
+            )
+
+            r["plus"].pressed.connect(
+                lambda j=joint, row=r:
+                    self._start_repeat_jog(
+                        j,
+                        row,
+                        self.jog_override
+                    )
+            )
+
+            r["plus"].released.connect(
+                self._stop_repeat_jog
+            )
+
+            r["connected"] = True
+
+    def _start_repeat_jog(self, joint, row, amount):
+        self._repeat_joint = joint
+        self._repeat_row = row
+        self._repeat_amount = amount
+
+        # 押した瞬間に1回実行
+        self._move_joint(joint, row, amount)
+
+        # 長押し判定まで少し待つ
+        self.jog_timer.start(300)
+
+
+    def _repeat_jog(self):
+        if self._repeat_joint is None:
+            return
+
+        self._move_joint(
+            self._repeat_joint,
+            self._repeat_row,
+            self._repeat_amount
         )
 
-        self.override_plus_btn.set_on_clicked(
-            self._on_override_plus
-        )
+        # 2回目以降は速くする
+        if self.jog_timer.interval() != 100:
+            self.jog_timer.start(100)
 
-        # ボタンを小さめにする
-        self.override_minus_btn.horizontal_padding_em = 0.2
-        self.override_minus_btn.vertical_padding_em = 0.1
+    def _stop_repeat_jog(self):
+        self.jog_timer.stop()
 
-        self.override_plus_btn.horizontal_padding_em = 0.2
-        self.override_plus_btn.vertical_padding_em = 0.1
+        self._repeat_joint = None
+        self._repeat_row = None
+        self._repeat_amount = 0.0
 
-        self.override_row.add_child(self.override_combo)
-        self.override_row.add_stretch()
-        self.override_row.add_child(self.override_minus_btn)
-        self.override_row.add_child(self.override_plus_btn)
+    def set_signal_axis_info(self, joint_info_list):
+        while len(self.signal_axis_rows) < len(joint_info_list):
+            row_widget = QWidget()
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(4)
 
-        self.motion_panel.add_child(self.override_row)
-        separator = gui.Label("=" *20)
-        self.motion_panel.add_child(separator)
-        self._setting_axis_info = False
-        
-        self.motion_axis_rows = []
-        self.signal_axis_rows = []
-                
-        gui.Application.instance.post_to_main_thread(
-            self.window,
-            self._initial_refresh
-        )
+            name_label = QLabel("")
+            signal_check = QCheckBox("")
 
-    def _initial_refresh(self):
-        self.window.set_needs_layout()
+            row_dict = {
+                "row": row_widget,
+                "label": name_label,
+                "check": signal_check,
+                "joint": None,
+                "connected": False,
+            }
+
+            row_layout.addWidget(name_label)
+            row_layout.addStretch()
+            row_layout.addWidget(signal_check)
+
+            row_widget.setVisible(False)
+            insert_index = self.signal_layout.count() - 1
+            self.signal_layout.insertWidget(insert_index, row_widget)
+            self.signal_axis_rows.append(row_dict)
+
+        name_counts = {}
+
+        for r in self.signal_axis_rows:
+            r["row"].setVisible(False)
+            r["joint"] = None
+
+        for i, joint in enumerate(joint_info_list):
+            r = self.signal_axis_rows[i]
+
+            r["joint"] = joint
+
+            base_name = joint.get("name", "")
+            count = name_counts.get(base_name, 0)
+            name_counts[base_name] = count + 1
+
+            display_name = base_name if count == 0 else f"{base_name}{count}"
+
+            r["label"].setText(display_name)
+
+            node = joint.get("node")
+            if node is None:
+                continue
+
+            r["check"].blockSignals(True)
+            r["check"].setChecked(bool(node.joint_value))
+            r["check"].blockSignals(False)
+
+            r["row"].setVisible(True)
+
+            if r["connected"]:
+                r["check"].toggled.disconnect()
+            r["check"].toggled.connect(
+                lambda checked, j=joint:
+                    self._signal_changed(j, checked)
+            )
+            r["connected"] = True
 
     def _apply_value_text(self, row, text):
         if self._setting_axis_info:
@@ -125,279 +387,71 @@ class AxisControlWindow:
             self._restore_current_value(row)
             return
 
-        amount = target_value - joint["node"].joint_value
+        current_value = joint["node"].joint_value
+        amount = target_value - current_value
+
         self.on_joint_move(joint, amount)
         self._restore_current_value(row)
-    
+
     def _restore_current_value(self, row):
-        current_value = row["joint"]["node"].joint_value
-        row["value"].text_value = self._value_format(current_value)
-        self._refresh()
+        joint = row.get("joint")
+        if joint is None:
+            return
 
-    def _on_layout(self, layout_context):
-        content = self.window.content_rect
+        node = joint.get("node")
+        if node is None:
+            return
 
-        margin = 0
-        gap = 2
-        em = self.window.theme.font_size
-
-        left_w = int(11 * em)
-        right_w = content.width - left_w - gap - margin * 2
-
-        x = content.x + margin
-        y = content.y + margin
-        h = content.height - margin * 2
-
-        self.motion_panel.frame = gui.Rect(
-            x,
-            y,
-            left_w,
-            h
+        row["value"].setText(
+            self._value_format(node.joint_value)
         )
 
-        self.signal_panel.frame = gui.Rect(
-            x + left_w + gap,
-            y,
-            right_w,
-            h
+    def _move_joint(self, joint, row, amount):
+        self.on_joint_move(joint, amount)
+
+        current_value = joint["node"].joint_value
+        row["value"].setText(
+            self._value_format(current_value)
         )
 
-    def _on_close(self):
-        return self.allow_close
+    def _signal_changed(self, joint, checked):
+        if self._setting_axis_info:
+            return
 
-    def close_from_main(self):
-        self.allow_close = True
-        self.window.close()
-    
-    def set_axis_info(self, joint_info_list):
-        self._setting_axis_info = True
-        signal_joints = []
-        motion_joints = []
+        node = joint.get("node")
+        if node is None:
+            return
 
-        for joint in joint_info_list:
-            joint_def = joint.get("node").joint
-            joint_type = getattr(joint_def, "type", "")
-
-            if joint_type == "signal":
-                signal_joints.append(joint)
-            else:
-                motion_joints.append(joint)
-
-        try:
-            self.set_motion_axis_info(motion_joints)
-            self.set_signal_axis_info(signal_joints)
-        finally:
-            self._setting_axis_info = False
-
-        self.window.set_needs_layout()
-
-    def set_motion_axis_info(self, joint_info_list):
-        while len(self.motion_axis_rows) < len(joint_info_list):
-            axis_row = gui.Horiz(5)
-            name_label = gui.Label("")
-            value_edit = gui.TextEdit()
-            value_edit.enabled = True
-            value_edit.text_value = self._value_format(0)
-
-            minus_btn = gui.Button("-")
-            plus_btn = gui.Button("+")
-            minus_btn.horizontal_padding_em = 0.2
-            minus_btn.vertical_padding_em = 0.1
-            plus_btn.horizontal_padding_em = 0.2
-            plus_btn.vertical_padding_em = 0.1
-
-            row_dict = {
-                "row": axis_row,
-                "label": name_label,
-                "value": value_edit,
-                "minus": minus_btn,
-                "plus": plus_btn,
-                "joint": None,
-            }
-
-            value_edit.set_on_value_changed(
-                lambda text, row=row_dict:
-                    self._apply_value_text(row, text)
-            )
-
-            axis_row.add_child(name_label)
-            axis_row.add_stretch()
-            axis_row.add_child(value_edit)
-            axis_row.add_child(minus_btn)
-            axis_row.add_child(plus_btn)
-
-            axis_row.visible = False
-            self.motion_panel.add_child(axis_row)
-            self.motion_axis_rows.append(row_dict)
-
-        name_counts = {}
-        for r in self.motion_axis_rows:
-            r["row"].visible = False
-            r["joint"] = None
-
-        for i, joint in enumerate(joint_info_list):
-            r = self.motion_axis_rows[i]
-
-            r["joint"] = joint
-            base_name = joint.get("name", "")
-            count = name_counts.get(base_name, 0)
-            name_counts[base_name] = count + 1
-
-            if count == 0:
-                display_name = base_name
-            else:
-                display_name = f"{base_name}{count}"
-            if len(display_name) == 1:
-                display_name = " "*2 + display_name
-            r["label"].text = display_name
-
-            node = joint.get("node")
-
-            if node is None:
-                continue
-
-            r["row"].visible = True
-
-            current_value = joint["node"].joint_value
-
-            r["value"].visible = True
-            r["minus"].visible = True
-            r["plus"].visible = True
-            r["value"].text_value = self._value_format(current_value)
-            r["minus"].set_on_clicked(
-                lambda j=joint, row=r:
-                    self._move_joint(j, row, -self.jog_override)
-            )
-            r["plus"].set_on_clicked(
-                lambda j=joint, row=r:
-                    self._move_joint(j, row, self.jog_override)
-            )
-
-    def set_signal_axis_info(self, joint_info_list):
-        while len(self.signal_axis_rows) < len(joint_info_list):
-            axis_row = gui.Horiz(4)
-            name_label = gui.Label("")
-            signal_check = gui.Checkbox("")
-            signal_check.visible = False
-
-            row_dict = {
-                "row": axis_row,
-                "label": name_label,
-                "check": signal_check,
-                "joint": None,
-            }
-
-            axis_row.add_child(name_label)
-            axis_row.add_stretch()
-            axis_row.add_child(signal_check)
-
-            axis_row.visible = False
-
-            self.signal_panel.add_child(axis_row)
-            self.signal_axis_rows.append(row_dict)
-
-        name_counts = {}
-        for r in self.signal_axis_rows:
-            r["row"].visible = False
-            r["joint"] = None
-            r["check"].visible = False
-
-        for i, joint in enumerate(joint_info_list):
-            r = self.signal_axis_rows[i]
-
-            r["joint"] = joint
-            base_name = joint.get("name", "")
-            count = name_counts.get(base_name, 0)
-            name_counts[base_name] = count + 1
-
-            if count == 0:
-                display_name = base_name
-            else:
-                display_name = f"{base_name}{count}"
-
-            r["label"].text = display_name
-
-            node = joint.get("node")
-
-            if node is None:
-                continue
-
-            r["row"].visible = True
-            r["check"].visible = True
-            r["check"].checked = bool(joint["node"].joint_value)
-
-            r["check"].set_on_checked(
-                lambda checked, j=joint:
-                    self._signal_changed(j, checked)
-            )
+        target_value = 1.0 if checked else 0.0
+        current_value = 1.0 if bool(node.joint_value) else 0.0
+        amount = target_value - current_value
+        if amount == 0:
+            return
+        self.on_joint_move(joint, amount)
 
     def _set_override_index(self, index):
-
-        if index < 0:
-            index = 0
-
-        if index >= len(override_items):
-            index = len(override_items) - 1
+        index = max(0, min(index, len(override_items) - 1))
 
         self.jog_override_index = index
+        self.jog_override = override_items[index][1]
 
-        text, value = override_items[self.jog_override_index]
+        self.override_combo.blockSignals(True)
+        self.override_combo.setCurrentIndex(index)
+        self.override_combo.blockSignals(False)
 
-        self.jog_override = value
-        self.override_combo.selected_index = self.jog_override_index
-
-        print("Jog Override:", text, value)
-
-
-    def _on_override_changed(self, text, index):
-
+    def _on_override_changed(self, index):
         self._set_override_index(index)
 
-
     def _on_override_minus(self):
-
         self._set_override_index(
             self.jog_override_index - 1
         )
 
-
     def _on_override_plus(self):
-
         self._set_override_index(
             self.jog_override_index + 1
         )
 
-    def _move_joint(self, joint, row, amount):
-
-        self.on_joint_move(joint, amount)
-
-        current_value = joint["node"].joint_value
-        row["value"].text_value = self._value_format(current_value)
-
-        self._refresh()
-
-    def _signal_changed(self, joint, checked):
-
-        if self._setting_axis_info:
-            return
-
-        value = 1.0 if checked else 0.0
-
-        self.on_joint_move(
-            joint,
-            value
-        )
-        
-        self._refresh()
-    
-    def _refresh(self):
-        self.window.set_needs_layout()
-
-    def _value_format(self, value):
-        text = f"{value:.4f}"
-        count = max(0, 2 * (10-len(text)))
-        return " " * count + text
-    
     def refresh_axis_values(self):
         if self._setting_axis_info:
             return
@@ -413,7 +467,9 @@ class AxisControlWindow:
                 if node is None:
                     continue
 
-                r["value"].text_value = self._value_format(node.joint_value)
+                r["value"].setText(
+                    self._value_format(node.joint_value)
+                )
 
             for r in self.signal_axis_rows:
                 joint = r.get("joint")
@@ -424,9 +480,12 @@ class AxisControlWindow:
                 if node is None:
                     continue
 
-                r["check"].checked = bool(node.joint_value)
+                r["check"].blockSignals(True)
+                r["check"].setChecked(bool(node.joint_value))
+                r["check"].blockSignals(False)
 
         finally:
             self._setting_axis_info = False
 
-        self._refresh()
+    def _value_format(self, value):
+        return f"{value:.4f}"

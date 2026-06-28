@@ -4,7 +4,7 @@ import open3d.visualization.gui as gui # type: ignore
 
 from app.scene_view import SceneView
 from app.control_panel import ControlPanel
-from app.axis_window import AxisControlWindow
+from app.axis_window import AxisControlWindowQt
 from app.program_window_qt import MachinePanelQt
 from core.model_builder import collect_all_joint_info
 
@@ -37,12 +37,12 @@ class MainWindow:
             self._on_close
         )
 
-        self.axis_window = AxisControlWindow(
+        self.axis_window = AxisControlWindowQt(
             on_joint_move=self.on_joint_move
         )
+        self.axis_window.show()
         self.program_window = MachinePanelQt(
-            on_position_sample=self.apply_program_position,
-            on_window_activated=self.raise_all_windows
+            on_position_sample=self.apply_program_position
         )
         self.program_window.show()
         self._move_sub_window()
@@ -92,14 +92,14 @@ class MainWindow:
             joint_info = collect_all_joint_info(
                 self.scene_view.roots
             )
-            gui.Application.instance.post_to_main_thread(
-                self.axis_window.window,
-                lambda: self.axis_window.set_axis_info(joint_info)
-            )
+            
+            self.axis_window.set_axis_info(joint_info)
+            
             gui.Application.instance.post_to_main_thread(
                 self.window,
                 lambda: self.program_window.update_axis_info(joint_info)
             )
+            self.raise_all_windows()
         except Exception:
             traceback.print_exc()
 
@@ -111,35 +111,42 @@ class MainWindow:
         )
 
     def _move_sub_window(self):
-        window_gap = 0
+        window_gap = 2
+        sub_window_width = 300
+
         main_rect = self.window.os_frame
-
-        axis_rect = self.axis_window.window.os_frame
-        axis_rect.x = main_rect.x + main_rect.width + window_gap
-        axis_rect.y = main_rect.y
-        self.axis_window.window.os_frame = axis_rect
-        
         scale = self.program_window.devicePixelRatioF()
-        self.program_window.resize(
-            self.program_window.width(),
-            int(main_rect.height / scale) + 30
-        )
-        program_rect = self.program_window.frameGeometry()
-        main_left = (main_rect.x ) / scale
-        main_top = (main_rect.y ) / scale
-        program_width = program_rect.width()
 
-        program_x = main_left - program_width - window_gap
-        program_y = main_top - 29
+        main_x = int(main_rect.x / scale)
+        main_y = int(main_rect.y / scale)
+        main_w = int(main_rect.width / scale)
+        main_h = int(main_rect.height / scale)
 
-        self.program_window.move(
-            int(program_x),
-            int(program_y)
-        )
+        if self.axis_window is not None:
+            self.axis_window.resize(
+                sub_window_width,
+                main_h + 30
+            )
+
+            self.axis_window.move(
+                main_x + main_w + window_gap,
+                main_y - 29
+            )
+
+        if self.program_window is not None:
+            self.program_window.resize(
+                sub_window_width,
+                main_h + 30
+            )
+
+            self.program_window.move(
+                main_x - sub_window_width - window_gap,
+                main_y - 29
+            )
             
     def _on_close(self):
         if self.axis_window is not None:
-            self.axis_window.window.close_from_main()
+            self.axis_window.close()
         if self.program_window is not None:
             self.program_window.close()
 
@@ -148,9 +155,9 @@ class MainWindow:
     def apply_program_position(self, position):
         for axis_name, value in position.items():
             self.scene_view.set_joint_value_by_name(axis_name, value)
-            
+        
         gui.Application.instance.post_to_main_thread(
-            self.axis_window.window,
+            self.window,
             self.axis_window.refresh_axis_values
         )
         gui.Application.instance.post_to_main_thread(
@@ -159,9 +166,12 @@ class MainWindow:
         )
     
     def raise_all_windows(self):
-        # Open3D sub windows
         if self.axis_window is not None:
-            self.axis_window.window.show(True)
+            self.axis_window.show()
+            self.axis_window.raise_()
 
-        # Open3D main window
+        if self.program_window is not None:
+            self.program_window.show()
+            self.program_window.raise_()
+
         self.window.show(True)

@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QGridLayout
 )
+from app.qt_style import apply_common_dark_theme, TitleBar
 import re
 
 class LineNumberArea(QWidget):
@@ -189,12 +190,11 @@ class ProgramEditor(QPlainTextEdit):
         self.setExtraSelections(selections)
 
 class MachinePanelQt(QMainWindow):
-    def __init__(self, on_position_sample=None, on_window_activated=None):
+    def __init__(self, on_position_sample=None):
         super().__init__()
         self.on_position_sample = on_position_sample
-        self.on_window_activated = on_window_activated
 
-        self.setWindowTitle("Machine Panel")
+        title_bar = TitleBar(self ,"Machine Panel", on_close=self.on_close_clicked)
         self.resize(300, 720)
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
@@ -210,8 +210,6 @@ class MachinePanelQt(QMainWindow):
         self.machine_timer.timeout.connect(self.poll_machine)
 
         self._drag_start_pos = None
-
-        title_bar = self.create_title_bar("Machine Panel")
 
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
@@ -238,8 +236,11 @@ class MachinePanelQt(QMainWindow):
         root.setLayout(main_layout)
 
         self.setCentralWidget(root)
-        self.apply_dark_theme()
+        apply_common_dark_theme(self)
 
+    def on_close_clicked(self):
+        pass
+    
     def create_program_tab(self):
         self.editor = ProgramEditor()
 
@@ -318,6 +319,8 @@ class MachinePanelQt(QMainWindow):
         
         self.connect_toggle_button = QPushButton("Connect")
         self.sync_toggle_button = QPushButton("Start Sync")
+        self.connect_toggle_button.setFixedWidth(100)
+        self.sync_toggle_button.setFixedWidth(100)
 
         self.connect_toggle_button.clicked.connect(
             self.toggle_machine_connection
@@ -343,7 +346,7 @@ class MachinePanelQt(QMainWindow):
         self.machine_axis_info = []
 
         layout = QVBoxLayout()
-        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setContentsMargins(5,0,2,0)
         layout.setSpacing(2)
 
         self.ip_edit.setMinimumWidth(95)
@@ -353,24 +356,26 @@ class MachinePanelQt(QMainWindow):
         network_layout.addWidget(self.ip_edit)
         network_layout.addWidget(QLabel("Port"))
         network_layout.addWidget(self.port_edit)
-        network_layout.addWidget(QLabel("Polling"))
-        network_layout.addWidget(self.machine_interval_combo)
+        network_layout.addStretch()
+        network_layout.addWidget(self.connect_toggle_button)
         layout.addLayout(network_layout)
         layout.addSpacing(4)
 
-        connect_layout = QHBoxLayout()
-        connect_layout.addWidget(self.connect_toggle_button)
-        connect_layout.addWidget(self.sync_toggle_button)
-        layout.addLayout(connect_layout)
+        polling_layout = QHBoxLayout()
+        polling_layout.addWidget(QLabel("Polling Interval: "))
+        polling_layout.addStretch()
+        polling_layout.addWidget(self.machine_interval_combo)
+        polling_layout.addStretch()
+        polling_layout.addWidget(self.sync_toggle_button)
+        layout.addLayout(polling_layout)
         layout.addSpacing(4)
 
         status_layout = QHBoxLayout()
-        status_layout.addWidget(QLabel("Status: "))
+        status_layout.addStretch()
         status_layout.addSpacing(8)
         status_layout.addWidget(self.connection_status_label)
         status_layout.addSpacing(16)
         status_layout.addWidget(self.machine_status_label)
-        status_layout.addStretch()
         layout.addLayout(status_layout)
         layout.addSpacing(4)
 
@@ -389,8 +394,6 @@ class MachinePanelQt(QMainWindow):
                 QHeaderView.Stretch
         )
         self.axis_table.horizontalHeader().setStretchLastSection(False)
-
-        layout.addWidget(QLabel("Axis Info: "))
         layout.addWidget(self.axis_table)
 
         tab = QWidget()
@@ -581,58 +584,6 @@ class MachinePanelQt(QMainWindow):
             self.axis_table.setItem(row_index, 3, QTableWidgetItem(str(target_info)))
             row_index += 1
                 
-    def create_title_bar(self, title_text):
-        title_bar = QWidget()
-        title_bar.setObjectName("TitleBar")
-        title_bar.setFixedHeight(28)
-
-        layout = QHBoxLayout()
-        layout.setContentsMargins(8, 0, 0, 0)
-        layout.setSpacing(4)
-
-        title = QLabel(title_text)
-
-        close_button = QPushButton("✕")
-        close_button.setObjectName("CloseButton")
-        close_button.setFixedSize(30, 30)
-        close_button.clicked.connect(self.close)
-
-        layout.addWidget(title)
-        layout.addStretch()
-        layout.addWidget(close_button)
-
-        title_bar.setLayout(layout)
-        title_bar.mousePressEvent = self.title_bar_mouse_press_event
-        title_bar.mouseMoveEvent = self.title_bar_mouse_move_event
-        title_bar.mouseReleaseEvent = self.title_bar_mouse_release_event
-
-        return title_bar
-    
-    def title_bar_mouse_press_event(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_start_pos = (
-                event.globalPosition().toPoint()
-                - self.frameGeometry().topLeft()
-            )
-            event.accept()
-
-
-    def title_bar_mouse_move_event(self, event):
-        if (
-            event.buttons() & Qt.MouseButton.LeftButton
-            and self._drag_start_pos is not None
-        ):
-            self.move(
-                event.globalPosition().toPoint()
-                - self._drag_start_pos
-            )
-            event.accept()
-
-
-    def title_bar_mouse_release_event(self, event):
-        self._drag_start_pos = None
-        event.accept()
-
     def get_program_text(self):
         return self.editor.toPlainText()
 
@@ -855,122 +806,6 @@ class MachinePanelQt(QMainWindow):
     def pause_playback(self):
         if self.timer.isActive():
             self.timer.stop()
-
-    def apply_dark_theme(self):
-        self.setStyleSheet("""
-            QTableWidget {
-                background-color: #1e1e1e;
-                color: white;
-                gridline-color: #555555;
-                border: 1px solid #555555;
-                alternate-background-color: #2a2a2a;
-            }
-
-            QHeaderView::section {
-                background-color: #3a3a3a;
-                color: white;
-                border: 1px solid #666666;
-                padding: 1px;
-            }
-
-            QTableWidget::item {
-                padding: 1px;
-            }
-           QTabWidget::pane {
-                border: 1px solid #555555;
-                background-color: #232323;
-            }
-
-            QTabBar::tab {
-                background-color: #303030;
-                color: #aaaaaa;
-                padding: 2px 0px;
-                border: 1px solid #555555;
-                border-bottom: none;
-                min-width: 100px;
-            }
-
-            QTabBar::tab:selected {
-                background-color: #2d4b55;
-                color: white;
-                border-top: 2px solid #00d0ff;
-            }
-
-            QTabBar::tab:hover {
-                background-color: #0078d7;
-                color: white;
-            }
-
-            QTabBar::tab:!selected {
-                margin-top: 3px;
-            }
-            QWidget#TitleBar {
-                background-color: #f3f3f3;
-                border-bottom: 1px solid #d0d0d0;
-            }
-
-            QWidget#TitleBar QLabel {
-                background-color: #f3f3f3;
-                color: #202020;
-                font-size: 12px;
-            }
-
-            QWidget#TitleBar QPushButton {
-                background-color: #f3f3f3;
-                color: #909090;
-                border: none;
-                font-size: 18px;
-            }
-
-            QWidget#TitleBar QPushButton:hover {
-                background-color: #e5e5e5;
-            }
-
-            QWidget#TitleBar QPushButton:pressed {
-                background-color: #d8d8d8;
-            }
-            QWidget#TitleBar QPushButton#CloseButton:hover {
-                background-color: #c42b1c;
-                color: white;
-            }
-            QMainWindow {
-                background-color: #232323;
-            }
-
-            QWidget {
-                background-color: #232323;
-                color: white;
-            }
-
-            QPlainTextEdit {
-                background-color: #1e1e1e;
-                color: white;
-                selection-background-color: #4678c8;
-                selection-color: white;
-            }
-
-            QPushButton {
-                background-color: #404040;
-                color: white;
-                border: 1px solid #555555;
-                padding: 3px;
-            }
-
-            QPushButton:hover {
-                background-color: #505050;
-            }
-
-            QComboBox {
-                background-color: #404040;
-                color: white;
-                border: 1px solid #555555;
-                padding: 2px;
-            }
-
-            QLabel {
-                color: white;
-            }
-        """)
 
     def set_program_editable(self, editable: bool):
         self.editor.setReadOnly(not editable)
