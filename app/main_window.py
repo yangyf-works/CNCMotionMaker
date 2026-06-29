@@ -75,9 +75,7 @@ class MainWindow:
         self.window.add_child(self.control_panel.widget)
 
         self.window.set_on_layout(self._on_layout)
-        self.window.set_on_close(
-            self._on_close
-        )
+        self.window.set_on_close(self._on_close)
 
         self.axis_window = AxisControlWindowQt(
             on_joint_move=self.on_joint_move
@@ -126,6 +124,7 @@ class MainWindow:
             panel_width,
             rect.height
         )
+        self.raise_all_windows()
 
     def on_json_selected(self, json_path):
         print("Load JSON:", json_path)
@@ -217,9 +216,7 @@ class MainWindow:
 
     def raise_all_windows(self):
         if self.axis_window is not None:
-            #self.axis_window.show()
             self.axis_window.raise_()
 
         if self.program_window is not None:
-            self.program_window.show()
             self.program_window.raise_()
