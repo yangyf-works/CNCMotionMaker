@@ -7,6 +7,42 @@ from app.control_panel import ControlPanel
 from app.axis_window import AxisControlWindowQt
 from app.program_window_qt import MachinePanelQt
 from core.model_builder import collect_all_joint_info
+import ctypes
+
+def set_open3d_window_icon(window_title, icon_path):
+    icon_path = str(Path(icon_path).resolve())
+
+    user32 = ctypes.windll.user32
+
+    hwnd = user32.FindWindowW(None, window_title)
+    if not hwnd:
+        print("Open3D window not found:", window_title)
+        return
+
+    WM_SETICON = 0x0080
+    ICON_SMALL = 0
+    ICON_BIG = 1
+    IMAGE_ICON = 1
+    LR_LOADFROMFILE = 0x0010
+
+    hicon = user32.LoadImageW(
+        None,
+        icon_path,
+        IMAGE_ICON,
+        0,
+        0,
+        LR_LOADFROMFILE
+    )
+
+    if not hicon:
+        print("Icon load failed:", icon_path)
+        return
+
+    # タイトルバー左上
+    user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hicon)
+
+    # タスクバー
+    user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, hicon)
 
 class MainWindow:
 
@@ -19,9 +55,15 @@ class MainWindow:
         self.control_panel_collapsed = False
 
         self.scene_view = SceneView(self.window)
+        self.scene_view.widget.set_on_mouse(self._on_scene_mouse)
 
         project_root = Path(__file__).resolve().parent.parent
         json_dir = project_root / "JSON"
+
+        set_open3d_window_icon(
+            "CNCMotionMaker",
+            project_root / "assets" / "icon.ico"
+        )
 
         self.control_panel = ControlPanel(
             json_dir=json_dir,
@@ -51,6 +93,7 @@ class MainWindow:
             self.window,
             self._initial_refresh
         )
+        
 
     def toggle_control_panel(self):
         self.control_panel_collapsed = not self.control_panel_collapsed
@@ -99,7 +142,6 @@ class MainWindow:
                 self.window,
                 lambda: self.program_window.update_axis_info(joint_info)
             )
-            self.raise_all_windows()
         except Exception:
             traceback.print_exc()
 
@@ -125,23 +167,23 @@ class MainWindow:
         if self.axis_window is not None:
             self.axis_window.resize(
                 sub_window_width,
-                main_h + 30
+                main_h
             )
 
             self.axis_window.move(
                 main_x + main_w + window_gap,
-                main_y - 29
+                main_y - 30
             )
 
         if self.program_window is not None:
             self.program_window.resize(
                 sub_window_width,
-                main_h + 30
+                main_h
             )
 
             self.program_window.move(
                 main_x - sub_window_width - window_gap,
-                main_y - 29
+                main_y - 30
             )
             
     def _on_close(self):
@@ -153,25 +195,31 @@ class MainWindow:
         return True
     
     def apply_program_position(self, position):
-        for axis_name, value in position.items():
-            self.scene_view.set_joint_value_by_name(axis_name, value)
-        
+        def update():
+            for axis_name, value in position.items():
+                self.scene_view.set_joint_value_by_name(axis_name, value)
+
+            if self.axis_window is not None:
+                self.axis_window.refresh_axis_values()
+
+            self.scene_view.refresh_model()
+
         gui.Application.instance.post_to_main_thread(
             self.window,
-            self.axis_window.refresh_axis_values
+            update
         )
-        gui.Application.instance.post_to_main_thread(
-            self.scene_view.window,
-            self.scene_view.refresh_model
-        )
-    
+
+    def _on_scene_mouse(self, event):
+        if event.type == gui.MouseEvent.Type.BUTTON_DOWN:
+            self.raise_all_windows()
+
+        return gui.Widget.EventCallbackResult.IGNORED
+
     def raise_all_windows(self):
         if self.axis_window is not None:
-            self.axis_window.show()
+            #self.axis_window.show()
             self.axis_window.raise_()
 
         if self.program_window is not None:
             self.program_window.show()
             self.program_window.raise_()
-
-        self.window.show(True)

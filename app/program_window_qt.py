@@ -194,9 +194,11 @@ class MachinePanelQt(QMainWindow):
         super().__init__()
         self.on_position_sample = on_position_sample
 
-        title_bar = TitleBar(self ,"Machine Panel")
         self.resize(300, 720)
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.setWindowTitle("Machine Panel")
+        self.setWindowFlags(Qt.WindowType.Tool |
+            Qt.WindowType.CustomizeWindowHint |
+            Qt.WindowType.WindowTitleHint)
 
         self.samples = []
         self.sample_index = 0
@@ -227,7 +229,6 @@ class MachinePanelQt(QMainWindow):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        main_layout.addWidget(title_bar)
         main_layout.addWidget(self.tabs)
 
         root = QWidget()

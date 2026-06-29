@@ -40,7 +40,11 @@ class AxisControlWindowQt(QWidget):
 
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.resize(300, 720)
-        title_bar = TitleBar(self, "Joint Panel", True)
+        
+        self.setWindowTitle("Joint Panel")
+        self.setWindowFlags(Qt.WindowType.Tool |
+            Qt.WindowType.CustomizeWindowHint |
+            Qt.WindowType.WindowTitleHint)
 
         self.content_widget = QWidget()
         self.create_content_ui(self.content_widget)
@@ -48,7 +52,6 @@ class AxisControlWindowQt(QWidget):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
-        main_layout.addWidget(title_bar)
         main_layout.addWidget(self.content_widget)
 
         self.jog_timer = QTimer(self)
