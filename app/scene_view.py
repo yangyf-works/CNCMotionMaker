@@ -21,9 +21,7 @@ from core.model_builder import (
 import traceback
 
 class SceneView:
-
-    def __init__(self, window):
-
+    def __init__(self, window, on_mouse_down= None):
         self.window = window
         self.widget = gui.SceneWidget()
 
@@ -42,6 +40,7 @@ class SceneView:
         self._create_test_geometry()
 
         self.window.set_on_key(self._on_key)
+        self.on_mouse_down = on_mouse_down
         self.widget.set_on_mouse(self._on_mouse)
         self.roots = []
         self.realtime_sun_dir = np.array([0.0, -1.0, 0.0], dtype=float)
@@ -185,6 +184,8 @@ class SceneView:
         alt = event.is_modifier_down(gui.KeyModifier.ALT)
 
         if event.type == gui.MouseEvent.Type.BUTTON_DOWN: 
+            if self.on_mouse_down is not None:
+                self.on_mouse_down()
             if event.is_button_down(gui.MouseButton.MIDDLE) or alt:
                 self.sun_dragging = True
                 self.last_mouse_x = event.x
@@ -255,7 +256,7 @@ class SceneView:
             50000
         )
 
-        print("realtime_sun_dir:", self.realtime_sun_dir)
+        print(f"dx {dx} dy {dy} realtime_sun_dir {self.realtime_sun_dir}")
         
     def _rotation_matrix_axis_angle(self, axis, angle):
 

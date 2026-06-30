@@ -54,8 +54,8 @@ class MainWindow:
         )
         self.control_panel_collapsed = False
 
-        self.scene_view = SceneView(self.window)
-        self.scene_view.widget.set_on_mouse(self._on_scene_mouse)
+        self.scene_view = SceneView(self.window,
+            on_mouse_down=self.raise_all_windows)
 
         project_root = Path(__file__).resolve().parent.parent
         json_dir = project_root / "JSON"
@@ -207,12 +207,6 @@ class MainWindow:
             self.window,
             update
         )
-
-    def _on_scene_mouse(self, event):
-        if event.type == gui.MouseEvent.Type.BUTTON_DOWN:
-            self.raise_all_windows()
-
-        return gui.Widget.EventCallbackResult.IGNORED
 
     def raise_all_windows(self):
         if self.axis_window is not None:
