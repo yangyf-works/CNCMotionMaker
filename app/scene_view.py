@@ -35,14 +35,15 @@ class SceneView:
         self.widget.scene.set_background([0, 0, 0, 1])
         self.widget.scene.scene.enable_sun_light(True)
 
-        self.geometry_names = []
+        self.model_geometries = []
+        self.geometry_names = set()
 
+        self.roots = []
         self._create_test_geometry()
 
         self.window.set_on_key(self._on_key)
         self.on_mouse_down = on_mouse_down
         self.widget.set_on_mouse(self._on_mouse)
-        self.roots = []
         self.realtime_sun_dir = np.array([0.0, -1.0, 0.0], dtype=float)
         self.cur_sun_dir = np.array([0.0, -1.0, 0.0], dtype=float)
         self.sun_dragging = False
@@ -78,11 +79,12 @@ class SceneView:
             self.material
         )
 
-        self.geometry_names.append("axis")
+        self.geometry_names.add("axis")
         self.on_reset_camera()
 
     def clear_scene(self):
         self.geometry_names.clear()
+        self.model_geometries.clear()
         self.widget.scene.clear_geometry()
 
     def load_json_model(self, json_path: Path):
@@ -288,37 +290,59 @@ class SceneView:
         elif node.joint.type == "signal":
             node.joint_value = 1 if amount > 0 else 0
 
+        model_reset = node.joint.type == "signal"
         gui.Application.instance.post_to_main_thread(
             self.window,
-            self.refresh_model
+            lambda:self.refresh_model(model_reset)
         )
     
-    def refresh_model(self):
+    def refresh_model(self, model_reset=True):
         for root in self.roots:
             update_world_transform(root)
 
-        self.clear_scene()
+        if model_reset:
+            self.clear_scene()
+            geometry_list = []
+            self.model_geometries = []
 
-        geometry_list = []
+            for root in self.roots:
+                collect_meshes(root, geometry_list)
 
-        for root in self.roots:
-            collect_meshes(
-                root,
-                geometry_list
-            )
+            for i, (mesh, world_T) in enumerate(geometry_list):
+                m = o3d.geometry.TriangleMesh(mesh)
+                m.compute_triangle_normals()
 
-        for i, (mesh, world_T) in enumerate(geometry_list):
-            m = o3d.geometry.TriangleMesh(mesh)
-            m.transform(world_T)
-            m.compute_triangle_normals()
+                name = f"model_{i}"
 
-            name = f"model_{i}"
-            self.widget.scene.add_geometry(
-                name,
-                m,
-                self.material
-            )
-            self.geometry_names.append(name)
+                self.widget.scene.add_geometry(
+                    name,
+                    m,
+                    self.material
+                )
+
+                self.widget.scene.set_geometry_transform(name, world_T)
+
+                self.geometry_names.add(name)
+                self.model_geometries.append((name, mesh))
+        else:
+            if not self.model_geometries:
+                return self.refresh_model(model_reset=True)
+            
+            geometry_list = []
+
+            for root in self.roots:
+                collect_meshes(root, geometry_list)
+
+            if len(geometry_list) != len(self.model_geometries):
+                return self.refresh_model(model_reset=True)
+            
+            for i, (_, world_T) in enumerate(geometry_list):
+                name, _mesh = self.model_geometries[i]
+
+                if name not in self.geometry_names:
+                    return self.refresh_model(model_reset=True)
+
+                self.widget.scene.set_geometry_transform(name, world_T)
 
         if self.show_axis:
             self.show_joint_axes()
@@ -327,13 +351,21 @@ class SceneView:
 
     
     def on_reset_camera(self):
-        bounds = self.widget.scene.bounding_box
+        if hasattr(self, "roots") and self.roots:
+            for root in self.roots:
+                update_world_transform(root)
+            bounds = self.get_scene_bbox()
+        else:
+            bounds = self.widget.scene.bounding_box
 
         self.widget.setup_camera(
             60.0,
             bounds,
             bounds.get_center()
         )
+
+        self.widget.center_of_rotation = bounds.get_center()
+        self.widget.force_redraw()
 
     def on_save_stl(self):
         print("Save STL")
@@ -998,9 +1030,18 @@ class SceneView:
             if joint is None:
                 continue
 
-            if joint.name == axis_name:
-                node.joint_value = float(value)
-                return True
+            if joint.name != axis_name:
+                continue
+
+            new_value = float(value)
+
+            if joint.type == "signal":
+                changed = (node.joint_value != new_value)
+                node.joint_value = new_value
+                return changed
+
+            node.joint_value = new_value
+            return False
 
         print(f"Axis not found: {axis_name}")
         return False

@@ -84,6 +84,8 @@ class MainWindow:
         self.program_window = MachinePanelQt(
             on_position_sample=self.apply_program_position
         )
+        self._last_program_position = None
+
         self.program_window.show()
         self._move_sub_window()
 
@@ -194,14 +196,21 @@ class MainWindow:
         return True
     
     def apply_program_position(self, position):
+        if self._last_program_position == position:
+            return
+        
+        self._last_program_position = position.copy()
+        
         def update():
+            model_reset = False
             for axis_name, value in position.items():
-                self.scene_view.set_joint_value_by_name(axis_name, value)
+                if self.scene_view.set_joint_value_by_name(axis_name, value):
+                    model_reset = True
 
             if self.axis_window is not None:
                 self.axis_window.refresh_axis_values()
 
-            self.scene_view.refresh_model()
+            self.scene_view.refresh_model(model_reset)
 
         gui.Application.instance.post_to_main_thread(
             self.window,

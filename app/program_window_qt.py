@@ -225,6 +225,11 @@ class MachinePanelQt(QMainWindow):
             self.on_tab_changed
         )
 
+        self.step_hold_timer = QTimer(self)
+        self.step_hold_timer.timeout.connect(self._on_step_hold_timer)
+        self.step_hold_action = None
+        self.step_repeat_mode = False
+
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
@@ -250,8 +255,15 @@ class MachinePanelQt(QMainWindow):
 
         self.play_button.clicked.connect(self.play)
         self.stop_button.clicked.connect(self.stop)
-        self.step_forward_button.clicked.connect(self.step_forward)
-        self.step_back_button.clicked.connect(self.step_back)
+        self.step_forward_button.pressed.connect(
+            lambda: self.start_step_hold(self.step_forward)
+        )
+        self.step_forward_button.released.connect(self.stop_step_hold)
+
+        self.step_back_button.pressed.connect(
+            lambda: self.start_step_hold(self.step_back)
+        )
+        self.step_back_button.released.connect(self.stop_step_hold)
 
         self.interval_combo = QComboBox()
         self.interval_combo.addItems(
@@ -287,9 +299,9 @@ class MachinePanelQt(QMainWindow):
         side_layout.setSpacing(4)
 
         side_layout.addWidget(self.play_button)
-        side_layout.addWidget(self.stop_button)
-        side_layout.addWidget(self.step_back_button)
         side_layout.addWidget(self.step_forward_button)
+        side_layout.addWidget(self.step_back_button)
+        side_layout.addWidget(self.stop_button)
 
         side_layout.addSpacing(4)
         side_layout.addWidget(QLabel("Interval"))
@@ -310,6 +322,33 @@ class MachinePanelQt(QMainWindow):
 
         return tab
     
+    def start_step_hold(self, action):
+        self.step_hold_action = action
+
+        action()
+        self.step_repeat_mode = False
+
+        # 300ms後にリピート開始判定
+        self.step_hold_timer.start(300)
+
+    def stop_step_hold(self):
+        self.step_hold_timer.stop()
+        self.step_hold_action = None
+        self.step_repeat_mode = False
+
+    def _on_step_hold_timer(self):
+        if self.step_hold_action is None:
+            return
+
+        if not self.step_repeat_mode:
+            self.step_repeat_mode = True
+
+            interval_ms = int(self.get_interval_sec() * 1000)
+            self.step_hold_timer.start(interval_ms)
+            return
+
+        self.step_hold_action()
+
     def create_digital_twin_tab(self):
         self.ip_edit = QLineEdit()
         self.ip_edit.setText("127.0.0.1")
@@ -724,6 +763,7 @@ class MachinePanelQt(QMainWindow):
             if not self.samples:
                 self.samples = self.parse_program()
                 self.sample_index = 0
+                self.interval_combo.setEnabled(False)
         except ValueError as e:
             print(f"Program error: {e}")
             return
@@ -743,6 +783,9 @@ class MachinePanelQt(QMainWindow):
         self.timer.stop()
         self.samples = []
         self.sample_index = 0
+
+        self.interval_combo.setEnabled(True)
+
         self.set_program_editable(True)
         self.editor.highlight_program_line(None)
     
@@ -764,9 +807,15 @@ class MachinePanelQt(QMainWindow):
     def step_forward(self):
         self.pause_playback()
         self.set_program_editable(False)
-        if not self.samples:
-            self.samples = self.parse_program()
-            self.sample_index = 0
+        try:
+            if not self.samples:
+                self.samples = self.parse_program()
+                self.sample_index = 0
+                self.interval_combo.setEnabled(False)
+        except ValueError as e:
+            print(f"Program error: {e}")
+            self.stop_step_hold()
+            return
 
         if self.sample_index >= len(self.samples):
             return
@@ -781,9 +830,15 @@ class MachinePanelQt(QMainWindow):
     def step_back(self):
         self.pause_playback()
         self.set_program_editable(False)
-        if not self.samples:
-            self.samples = self.parse_program()
-            self.sample_index = 0
+        try:
+            if not self.samples:
+                self.samples = self.parse_program()
+                self.sample_index = 0
+                self.interval_combo.setEnabled(False)
+        except ValueError as e:
+            print(f"Program error: {e}")
+            self.stop_step_hold()
+            return
 
         if not self.samples:
             return
