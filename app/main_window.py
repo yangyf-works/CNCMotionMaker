@@ -6,6 +6,7 @@ from app.scene_view import SceneView
 from app.control_panel import ControlPanel
 from app.axis_window import AxisControlWindowQt
 from app.program_window_qt import MachinePanelQt
+from app.scene_view_manager import SceneViewManager
 from core.model_builder import collect_all_joint_info
 import ctypes
 
@@ -54,21 +55,26 @@ class MainWindow:
         )
         self.control_panel_collapsed = False
 
-        self.scene_view = SceneView(self.window,
-            on_mouse_down=self.raise_all_windows)
+        self.scene_manager = SceneViewManager()
+        self.scene_view = SceneView(self.window, on_mouse_down=self.raise_all_windows)
+        self.scene_manager.add_view(self.scene_view)
+        
+        self.extra_window = None
+        self.extra_scene_view = None
+        self._create_extra_view()
 
-        project_root = Path(__file__).resolve().parent.parent
-        json_dir = project_root / "JSON"
+        self.project_root = Path(__file__).resolve().parent.parent
+        json_dir = self.project_root / "JSON"
 
         set_open3d_window_icon(
             "CNCMotionMaker",
-            project_root / "assets" / "icon.ico"
+            self.project_root / "assets" / "icon.ico"
         )
 
         self.control_panel = ControlPanel(
             json_dir=json_dir,
             on_json_selected=self.on_json_selected,
-            on_toggle_panel=self.toggle_control_panel            
+            on_toggle_panel=self.toggle_control_panel,
         )
 
         self.window.add_child(self.scene_view.widget)
@@ -93,7 +99,63 @@ class MainWindow:
             self.window,
             self._initial_refresh
         )
-        
+            
+    def _create_extra_view(self):
+        self.extra_window = gui.Application.instance.create_window(
+            "CNCMotionMaker SubView",
+            1000,
+            720
+        )
+
+        self.extra_scene_view = SceneView(
+            self.extra_window,
+            on_mouse_down=None
+        )
+
+        self.extra_window.add_child(self.extra_scene_view.widget)
+        self.extra_window.set_on_layout(self._on_extra_layout)
+        self.extra_window.set_on_close(self._on_extra_close)
+        self.extra_window.set_needs_layout()
+
+        self.scene_manager.add_view(self.extra_scene_view)
+
+        gui.Application.instance.post_to_main_thread(
+            self.extra_window,
+            lambda: set_open3d_window_icon(
+                "CNCMotionMaker SubView",
+                self.project_root / "assets" / "icon.ico"
+            )
+        )
+
+    def open_extra_view(self):
+        if self.extra_window is None:
+            return
+
+    def _on_extra_close(self):
+        self.scene_manager.remove_view(self.extra_scene_view)
+
+        self.extra_scene_view = None
+        self.extra_window = None
+        return True
+
+    def _on_extra_layout(self, layout_context):
+        if self.extra_window is None:
+            return
+
+        if self.extra_scene_view is None:
+            return
+
+        rect = self.extra_window.content_rect
+
+        self.extra_scene_view.widget.frame = gui.Rect(
+            rect.x,
+            rect.y,
+            rect.width,
+            rect.height
+        )
+
+        if rect.width <= 0 or rect.height <= 0:
+            return
 
     def toggle_control_panel(self):
         self.control_panel_collapsed = not self.control_panel_collapsed
@@ -131,7 +193,7 @@ class MainWindow:
     def on_json_selected(self, json_path):
         print("Load JSON:", json_path)
         try:
-            self.scene_view.load_json_model(json_path)
+            self.scene_manager.load_json_model(json_path)
 
             joint_info = collect_all_joint_info(
                 self.scene_view.roots
@@ -143,15 +205,31 @@ class MainWindow:
                 self.window,
                 lambda: self.program_window.update_axis_info(joint_info)
             )
+
         except Exception:
             traceback.print_exc()
 
     def on_joint_move(self, joint_info, direction):
+        node = joint_info["node"]
+        joint = node.joint
 
-        self.scene_view.move_joint(
-            joint_info["node"],
-            direction
-        )
+        if joint is None:
+            return
+
+        if joint.type == "rotate":
+            new_value = node.joint_value + direction
+        elif joint.type == "linear":
+            new_value = node.joint_value + direction
+        elif joint.type == "chain":
+            new_value = node.joint_value + direction
+        elif joint.type == "signal":
+            new_value = 1 if direction > 0 else 0
+        else:
+            return
+
+        self.apply_program_position({
+            joint.name: new_value
+        })
 
     def _move_sub_window(self):
         window_gap = 2
@@ -193,24 +271,31 @@ class MainWindow:
         if self.program_window is not None:
             self.program_window.close()
 
+        extra_window = self.extra_window
+        self.extra_window = None
+        self.extra_scene_view = None
+
+        if extra_window is not None:
+            extra_window.close()
         return True
     
     def apply_program_position(self, position):
         if self._last_program_position == position:
             return
-        
+
         self._last_program_position = position.copy()
-        
+
         def update():
             model_reset = False
+
             for axis_name, value in position.items():
-                if self.scene_view.set_joint_value_by_name(axis_name, value):
+                if self.scene_manager.set_joint_value_by_name(axis_name, value):
                     model_reset = True
 
             if self.axis_window is not None:
                 self.axis_window.refresh_axis_values()
 
-            self.scene_view.refresh_model(model_reset)
+            self.scene_manager.refresh_model(model_reset)
 
         gui.Application.instance.post_to_main_thread(
             self.window,

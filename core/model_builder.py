@@ -265,6 +265,8 @@ def build_geometry_list_from_model_json(data, base_dir):
     for root in roots:
         update_world_transform(root)
 
+    normalize_joint_names(roots)
+
     for root in roots:
         paint_meshes(root)
 
@@ -281,6 +283,29 @@ def build_geometry_list_from_model_json(data, base_dir):
         geometry_list.append(m)
 
     return roots, geometry_list
+
+def normalize_joint_names(roots):
+    name_counts = {}
+
+    def walk(node):
+        if node.joint is not None:
+            base_name = (
+                getattr(node.joint, "name", None)
+                or node.name
+            )
+
+            count = name_counts.get(base_name, 0)
+            name_counts[base_name] = count + 1
+
+            unique_name = base_name if count == 0 else f"{base_name}{count}"
+
+            node.joint.name = unique_name
+
+        for child in node.children:
+            walk(child)
+
+    for root in roots:
+        walk(root)
 
 def collect_joint_info(node, out_list):
     if node.joint is not None:
