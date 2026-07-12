@@ -3,7 +3,7 @@ from pathlib import Path
 from PySide6.QtWidgets import QApplication, QInputDialog
 from PySide6.QtGui import QIcon
 
-from app.main_window import MainWindow
+from app.main_window import MainWindow, get_app_root
 import open3d.visualization.gui as gui  # type: ignore
 
 from app.qt_style import apply_common_dark_theme, TitleBar
@@ -19,7 +19,7 @@ def ask_view_count():
     dialog.setIntStep(1)
 
     icon_path = (
-        Path(__file__).resolve().parent /
+        get_app_root() /
         "assets" /
         "icon.ico"
     )

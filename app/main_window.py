@@ -132,10 +132,10 @@ def set_open3d_window_icon(window_title, icon_path):
 def get_app_root() -> Path:
     if getattr(sys, "frozen", False):
         # EXEが置かれているフォルダ
-        return Path(sys.executable).resolve().parent
+        return Path(sys._MEIPASS)
 
     # 開発時：main.pyがあるプロジェクトルート
-    return Path(__file__).resolve().parent
+    return Path(__file__).resolve().parent.parent
 
 class MainWindow:
     def __init__(self, view_count=1):
