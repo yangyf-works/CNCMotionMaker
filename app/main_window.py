@@ -1,4 +1,5 @@
 from pathlib import Path
+import sys
 import traceback
 import open3d.visualization.gui as gui # type: ignore
 
@@ -9,6 +10,89 @@ from app.program_window_qt import MachinePanelQt
 from app.scene_view_manager import SceneViewManager
 from core.model_builder import collect_all_joint_info
 import ctypes
+
+user32 = ctypes.windll.user32
+
+GWL_STYLE = -16
+GWL_EXSTYLE = -20
+GWLP_HWNDPARENT = -8
+
+WS_SYSMENU = 0x00080000
+
+WS_EX_TOOLWINDOW = 0x00000080
+WS_EX_APPWINDOW = 0x00040000
+
+SWP_NOMOVE = 0x0002
+SWP_NOSIZE = 0x0001
+SWP_NOZORDER = 0x0004
+SWP_FRAMECHANGED = 0x0020
+
+def make_tool_window(
+    child_title: str,
+    owner_title: str,
+) -> bool:
+    child_hwnd = user32.FindWindowW(None, child_title)
+    owner_hwnd = user32.FindWindowW(None, owner_title)
+
+    if not child_hwnd:
+        print("Child window not found:", child_title)
+        return False
+
+    if not owner_hwnd:
+        print("Owner window not found:", owner_title)
+        return False
+
+    # サブ画面をメイン画面の所有ウィンドウにする
+    user32.SetWindowLongPtrW(
+        child_hwnd,
+        GWLP_HWNDPARENT,
+        owner_hwnd,
+    )
+
+    ex_style = user32.GetWindowLongPtrW(
+        child_hwnd,
+        GWL_EXSTYLE,
+    )
+
+    # タスクバーに独立表示しないツールウィンドウへ変更
+    ex_style |= WS_EX_TOOLWINDOW
+    ex_style &= ~WS_EX_APPWINDOW
+
+    user32.SetWindowLongPtrW(
+        child_hwnd,
+        GWL_EXSTYLE,
+        ex_style,
+    )
+
+    style = user32.GetWindowLongPtrW(
+        child_hwnd,
+        GWL_STYLE,
+    )
+
+    # 閉じるボタンとシステムメニューを削除
+    style &= ~WS_SYSMENU
+
+    user32.SetWindowLongPtrW(
+        child_hwnd,
+        GWL_STYLE,
+        style,
+    )
+
+    # スタイル変更を反映
+    user32.SetWindowPos(
+        child_hwnd,
+        None,
+        0,
+        0,
+        0,
+        0,
+        SWP_NOMOVE
+        | SWP_NOSIZE
+        | SWP_NOZORDER
+        | SWP_FRAMECHANGED,
+    )
+
+    return True
 
 def set_open3d_window_icon(window_title, icon_path):
     icon_path = str(Path(icon_path).resolve())
@@ -45,26 +129,43 @@ def set_open3d_window_icon(window_title, icon_path):
     # タスクバー
     user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, hicon)
 
-class MainWindow:
+def get_app_root() -> Path:
+    if getattr(sys, "frozen", False):
+        # EXEが置かれているフォルダ
+        return Path(sys.executable).resolve().parent
 
-    def __init__(self):
+    # 開発時：main.pyがあるプロジェクトルート
+    return Path(__file__).resolve().parent
+
+class MainWindow:
+    def __init__(self, view_count=1):
+        
+        self.window_gap = 2
+        self.sub_window_width = 300
+
+        self.project_root = get_app_root()
+        json_dir = self.project_root / "JSON"
+
+        self.scene_manager = SceneViewManager()
+
         self.window = gui.Application.instance.create_window(
             "CNCMotionMaker",
             1000,
             720
         )
         self.control_panel_collapsed = False
-
-        self.scene_manager = SceneViewManager()
-        self.scene_view = SceneView(self.window, on_mouse_down=self.raise_all_windows)
+        self.scene_view = SceneView(self.window)
         self.scene_manager.add_view(self.scene_view)
         
-        self.extra_window = None
-        self.extra_scene_view = None
-        self._create_extra_view()
+        self.extra_windows = []
+        self.extra_scene_views = []
 
-        self.project_root = Path(__file__).resolve().parent.parent
-        json_dir = self.project_root / "JSON"
+        for i in range(view_count - 1):
+            self._create_extra_view(i + 2)
+
+
+        for extra_scene_view in self.extra_scene_views:
+            self.scene_manager.add_view(extra_scene_view)
 
         set_open3d_window_icon(
             "CNCMotionMaker",
@@ -87,84 +188,173 @@ class MainWindow:
             on_joint_move=self.on_joint_move
         )
         self.axis_window.show()
+        make_tool_window(
+            child_title=self.axis_window.windowTitle(),
+            owner_title=self.window.title,
+        )
         self.program_window = MachinePanelQt(
             on_position_sample=self.apply_program_position
         )
         self._last_program_position = None
-
         self.program_window.show()
-        self._move_sub_window()
+        make_tool_window(
+            child_title=self.program_window.windowTitle(),
+            owner_title=self.window.title,
+        )
 
         gui.Application.instance.post_to_main_thread(
             self.window,
-            self._initial_refresh
+            self._initialize_window_layout
         )
-            
-    def _create_extra_view(self):
-        self.extra_window = gui.Application.instance.create_window(
-            "CNCMotionMaker SubView",
+    
+    def _initialize_window_layout(self):
+        self._arrange_open3d_windows()
+
+        self.window.set_needs_layout()
+        self.scene_view.widget.force_redraw()
+
+        for extra_window, extra_view in zip(
+            self.extra_windows,
+            self.extra_scene_views
+        ):
+            extra_window.set_needs_layout()
+            extra_view.widget.force_redraw()
+
+        self._move_sub_window()
+
+    def _get_open3d_windows(self):
+        return [self.window] + list(self.extra_windows)
+    
+    def _arrange_open3d_windows(self):
+        windows = self._get_open3d_windows()
+        count = len(windows)
+
+        if count == 0:
+            return
+
+        # PySide6から使用可能な画面領域を取得
+        from PySide6.QtWidgets import QApplication
+
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            return
+
+        geometry = screen.availableGeometry()
+        scale = screen.devicePixelRatio()
+
+        # Qt座標は論理ピクセル、Open3Dのos_frameは環境によって
+        # 物理ピクセル基準になるため、スケールを掛ける
+        screen_x = int(geometry.x() * scale)
+        screen_y = int(geometry.y() * scale)
+        screen_w = int(geometry.width() * scale)
+        screen_h = int(geometry.height() * scale)
+
+        main_rect = windows[0].os_frame
+        main_w = int(main_rect.width)
+        main_h = int(main_rect.height)
+
+        if count == 1:
+            return
+        elif 2 <= count <= 4:
+            sub_count = count - 1
+
+            total_width = main_w
+            total_height = main_h * 2 + self.window_gap
+
+            start_x = screen_x + (screen_w - total_width) // 2
+            start_y = screen_y + (screen_h - total_height) // 2
+
+            # メイン画面：上段全体
+            windows[0].os_frame = gui.Rect(
+                start_x,
+                start_y,
+                main_w,
+                main_h
+            )
+            total_width = total_width + (self.sub_window_width * scale + self.window_gap) * 2
+            start_x = start_x - (self.sub_window_width * scale + self.window_gap)
+            # 下段をサブ画面数で横方向に均等分割
+            available_width = total_width - self.window_gap * (sub_count - 1)
+            sub_width = available_width // sub_count
+            sub_y = start_y + main_h + self.window_gap + 30 * scale
+
+            for index in range(sub_count):
+                sub_x = start_x + index * (sub_width + self.window_gap)
+
+                # 割り切れなかった幅を最後の画面で吸収
+                if index == sub_count - 1:
+                    current_width = start_x + total_width - sub_x
+                else:
+                    current_width = sub_width
+
+                windows[index + 1].os_frame = gui.Rect(
+                    sub_x,
+                    sub_y,
+                    current_width,
+                    main_h
+                )
+
+    def _create_extra_view(self, view_no):
+        title = f"SubView {view_no}"
+
+        extra_window = gui.Application.instance.create_window(
+            title,
             1000,
             720
         )
 
-        self.extra_scene_view = SceneView(
-            self.extra_window,
+        extra_scene_view = SceneView(
+            extra_window,
             on_mouse_down=None
         )
 
-        self.extra_window.add_child(self.extra_scene_view.widget)
-        self.extra_window.set_on_layout(self._on_extra_layout)
-        self.extra_window.set_on_close(self._on_extra_close)
-        self.extra_window.set_needs_layout()
+        extra_window.add_child(extra_scene_view.widget)
 
-        self.scene_manager.add_view(self.extra_scene_view)
-
-        gui.Application.instance.post_to_main_thread(
-            self.extra_window,
-            lambda: set_open3d_window_icon(
-                "CNCMotionMaker SubView",
-                self.project_root / "assets" / "icon.ico"
-            )
+        extra_window.set_on_layout(
+            lambda layout_context, w=extra_window, v=extra_scene_view:
+                self._on_extra_layout(w, v)
         )
 
-    def open_extra_view(self):
-        if self.extra_window is None:
-            return
+        extra_window.set_on_close(
+            lambda w=extra_window, v=extra_scene_view:
+                self._on_extra_close(w, v)
+        )
 
-    def _on_extra_close(self):
-        self.scene_manager.remove_view(self.extra_scene_view)
+        extra_window.set_needs_layout()
 
-        self.extra_scene_view = None
-        self.extra_window = None
+        self.extra_windows.append(extra_window)
+        self.extra_scene_views.append(extra_scene_view)
+
+        make_tool_window(
+            child_title=title,
+            owner_title=self.window.title,
+        )
+
+    def _on_extra_close(self, extra_window, extra_scene_view):
+        self.scene_manager.remove_view(extra_scene_view)
+
+        if extra_window in self.extra_windows:
+            self.extra_windows.remove(extra_window)
+
+        if extra_scene_view in self.extra_scene_views:
+            self.extra_scene_views.remove(extra_scene_view)
+
         return True
 
-    def _on_extra_layout(self, layout_context):
-        if self.extra_window is None:
-            return
+    def _on_extra_layout(self, extra_window, extra_scene_view):
+        rect = extra_window.content_rect
 
-        if self.extra_scene_view is None:
-            return
-
-        rect = self.extra_window.content_rect
-
-        self.extra_scene_view.widget.frame = gui.Rect(
+        extra_scene_view.widget.frame = gui.Rect(
             rect.x,
             rect.y,
             rect.width,
             rect.height
         )
 
-        if rect.width <= 0 or rect.height <= 0:
-            return
-
     def toggle_control_panel(self):
         self.control_panel_collapsed = not self.control_panel_collapsed
         self.window.set_needs_layout()
-
-    def _initial_refresh(self):
-        self.window.set_needs_layout()
-        self.scene_view.widget.force_redraw()
-
+        
     def _on_layout(self, layout_context):
 
         rect = self.window.content_rect
@@ -188,7 +378,6 @@ class MainWindow:
             panel_width,
             rect.height
         )
-        self.raise_all_windows()
 
     def on_json_selected(self, json_path):
         print("Load JSON:", json_path)
@@ -232,9 +421,6 @@ class MainWindow:
         })
 
     def _move_sub_window(self):
-        window_gap = 2
-        sub_window_width = 300
-
         main_rect = self.window.os_frame
         scale = self.program_window.devicePixelRatioF()
 
@@ -245,40 +431,58 @@ class MainWindow:
 
         if self.axis_window is not None:
             self.axis_window.resize(
-                sub_window_width,
+                self.sub_window_width,
                 main_h
             )
 
             self.axis_window.move(
-                main_x + main_w + window_gap,
+                main_x + main_w + self.window_gap,
                 main_y - 30
             )
 
         if self.program_window is not None:
             self.program_window.resize(
-                sub_window_width,
+                self.sub_window_width,
                 main_h
             )
 
             self.program_window.move(
-                main_x - sub_window_width - window_gap,
+                main_x - self.sub_window_width - self.window_gap,
                 main_y - 30
             )
-            
+
     def _on_close(self):
+        if getattr(self, "_closing", False):
+            return True
+
+        self._closing = True
+
+        if self.program_window is not None:
+            self.program_window.stop_all_processing()
+
         if self.axis_window is not None:
             self.axis_window.close()
+            self.axis_window = None
+
         if self.program_window is not None:
             self.program_window.close()
+            self.program_window = None
 
-        extra_window = self.extra_window
-        self.extra_window = None
-        self.extra_scene_view = None
+        from PySide6.QtWidgets import QApplication
 
-        if extra_window is not None:
-            extra_window.close()
+        app = QApplication.instance()
+        if app is not None:
+            app.processEvents()
+
+        for view in list(self.extra_scene_views):
+            self.scene_manager.remove_view(view)
+
+        self.extra_scene_views.clear()
+
+        self.extra_windows.clear()
+
         return True
-    
+
     def apply_program_position(self, position):
         if self._last_program_position == position:
             return
@@ -301,10 +505,3 @@ class MainWindow:
             self.window,
             update
         )
-
-    def raise_all_windows(self):
-        if self.axis_window is not None:
-            self.axis_window.raise_()
-
-        if self.program_window is not None:
-            self.program_window.raise_()

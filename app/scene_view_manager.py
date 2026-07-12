@@ -4,6 +4,9 @@ class SceneViewManager:
     def __init__(self):
         self.views = []
         self.current_json_path = None
+        
+    def clear_views(self):
+        self.views.clear()
 
     def add_view(self, view):
         self.views.append(view)

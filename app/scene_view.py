@@ -98,7 +98,6 @@ class SceneView:
             )
             self.refresh_model()
             self.on_reset_camera()
-            print("Model loaded:", json_path.name)
 
         except Exception:
             traceback.print_exc()
