@@ -129,22 +129,13 @@ def set_open3d_window_icon(window_title, icon_path):
     # タスクバー
     user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, hicon)
 
-def get_app_root() -> Path:
-    if getattr(sys, "frozen", False):
-        # EXEが置かれているフォルダ
-        return Path(sys._MEIPASS)
-
-    # 開発時：main.pyがあるプロジェクトルート
-    return Path(__file__).resolve().parent.parent
-
 class MainWindow:
-    def __init__(self, view_count=1):
+    def __init__(self, view_count=1, root_path=None, json_dir=None):
         
         self.window_gap = 2
         self.sub_window_width = 300
 
-        self.project_root = get_app_root()
-        json_dir = self.project_root / "JSON"
+        self.project_root = root_path
 
         self.scene_manager = SceneViewManager()
 
@@ -224,75 +215,71 @@ class MainWindow:
 
     def _get_open3d_windows(self):
         return [self.window] + list(self.extra_windows)
-    
+
     def _arrange_open3d_windows(self):
         windows = self._get_open3d_windows()
         count = len(windows)
 
-        if count == 0:
+        if not 2 <= count <= 4:
             return
 
-        # PySide6から使用可能な画面領域を取得
         from PySide6.QtWidgets import QApplication
 
         screen = QApplication.primaryScreen()
         if screen is None:
             return
 
-        geometry = screen.availableGeometry()
+        g = screen.availableGeometry()
         scale = screen.devicePixelRatio()
 
-        # Qt座標は論理ピクセル、Open3Dのos_frameは環境によって
-        # 物理ピクセル基準になるため、スケールを掛ける
-        screen_x = int(geometry.x() * scale)
-        screen_y = int(geometry.y() * scale)
-        screen_w = int(geometry.width() * scale)
-        screen_h = int(geometry.height() * scale)
+        sx = int(g.x() * scale)
+        sy = int(g.y() * scale)
+        sw = int(g.width() * scale)
+        sh = int(g.height() * scale)
 
-        main_rect = windows[0].os_frame
-        main_w = int(main_rect.width)
-        main_h = int(main_rect.height)
+        main = windows[0].os_frame
+        original_w = int(main.width)
+        original_h = int(main.height)
 
-        if count == 1:
-            return
-        elif 2 <= count <= 4:
-            sub_count = count - 1
+        gap = int(self.window_gap)
+        side = int(self.sub_window_width * scale)
+        title_h = int(30 * scale)
+        margin = int(40)
 
-            total_width = main_w
-            total_height = main_h * 2 + self.window_gap
+        usable_w = sw - margin * 2
+        usable_h = sh - margin * 2
 
-            start_x = screen_x + (screen_w - total_width) // 2
-            start_y = screen_y + (screen_h - total_height) // 2
+        scale_w = (usable_w - side * 2 - gap * 2) / original_w
+        scale_h = (usable_h - title_h * 2 - gap) / (original_h * 2)
+        layout_scale = min(1.0, scale_w, scale_h)
 
-            # メイン画面：上段全体
-            windows[0].os_frame = gui.Rect(
-                start_x,
-                start_y,
-                main_w,
-                main_h
+        main_w = max(1, int(original_w * layout_scale))
+        main_h = max(1, int(original_h * layout_scale))
+
+        total_w = main_w + side * 2 + gap * 2
+        total_h = main_h * 2 + title_h * 2 + gap
+
+        x = sx + (sw - total_w) // 2
+        y = sy + (sh - total_h) // 2 + margin
+
+        main_x = x + side + gap
+
+        windows[0].os_frame = gui.Rect(
+            main_x, y, main_w, main_h
+        )
+
+        sub_count = count - 1
+        sub_y = y + title_h + main_h + gap
+        available_w = total_w - gap * (sub_count - 1)
+        sub_w = available_w // sub_count
+
+        for i in range(sub_count):
+            sub_x = x + i * (sub_w + gap)
+            width = total_w - (sub_x - x) if i == sub_count - 1 else sub_w
+
+            windows[i + 1].os_frame = gui.Rect(
+                sub_x, sub_y, width, main_h
             )
-            total_width = total_width + (self.sub_window_width * scale + self.window_gap) * 2
-            start_x = start_x - (self.sub_window_width * scale + self.window_gap)
-            # 下段をサブ画面数で横方向に均等分割
-            available_width = total_width - self.window_gap * (sub_count - 1)
-            sub_width = available_width // sub_count
-            sub_y = start_y + main_h + self.window_gap + 30 * scale
-
-            for index in range(sub_count):
-                sub_x = start_x + index * (sub_width + self.window_gap)
-
-                # 割り切れなかった幅を最後の画面で吸収
-                if index == sub_count - 1:
-                    current_width = start_x + total_width - sub_x
-                else:
-                    current_width = sub_width
-
-                windows[index + 1].os_frame = gui.Rect(
-                    sub_x,
-                    sub_y,
-                    current_width,
-                    main_h
-                )
 
     def _create_extra_view(self, view_no):
         title = f"SubView {view_no}"
