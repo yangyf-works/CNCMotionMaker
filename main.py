@@ -20,29 +20,6 @@ def get_JSON_path():
     else:
         return get_app_root() / "JSON"
 
-def ask_view_count():
-    dialog = QInputDialog()
-    dialog.setWindowTitle("CNCMotionMaker")
-    dialog.setLabelText("Open3D Views:")
-    dialog.setInputMode(QInputDialog.IntInput)
-
-    dialog.setIntRange(1, 4)
-    dialog.setIntValue(1)
-    dialog.setIntStep(1)
-
-    icon_path = (
-        get_app_root() /
-        "assets" /
-        "icon.ico"
-    )
-    dialog.setWindowIcon(QIcon(str(icon_path)))
-
-    if dialog.exec():
-        return dialog.intValue()
-
-    return None
-
-
 def main():
     qt_app = QApplication.instance()
 
@@ -50,15 +27,10 @@ def main():
         qt_app = QApplication(sys.argv)
 
     apply_common_dark_theme(qt_app)
-    view_count = ask_view_count()
-
-    if view_count is None:
-        return
 
     gui.Application.instance.initialize()
 
-    MainWindow(view_count=view_count, 
-               root_path = get_app_root(), 
+    MainWindow(root_path = get_app_root(), 
                json_dir = get_JSON_path())
 
     gui.Application.instance.run()

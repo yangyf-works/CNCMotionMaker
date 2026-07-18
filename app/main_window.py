@@ -2,6 +2,7 @@ from pathlib import Path
 import sys
 import traceback
 import open3d.visualization.gui as gui # type: ignore
+from PySide6.QtWidgets import QApplication
 
 from app.scene_view import SceneView
 from app.control_panel import ControlPanel
@@ -10,6 +11,7 @@ from app.program_window_qt import MachinePanelQt
 from app.scene_view_manager import SceneViewManager
 from core.model_builder import collect_all_joint_info
 import ctypes
+       
 
 user32 = ctypes.windll.user32
 
@@ -130,33 +132,46 @@ def set_open3d_window_icon(window_title, icon_path):
     user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, hicon)
 
 class MainWindow:
-    def __init__(self, view_count=1, root_path=None, json_dir=None):
+    def __init__(self, root_path=None, json_dir=None):
         
-        self.window_gap = 2
+        self.window_gap = 1
         self.sub_window_width = 300
 
-        self.project_root = root_path
+        self.window_w = 1000
+        self.window_h = 720
 
-        self.scene_manager = SceneViewManager()
+        screen = QApplication.primaryScreen()
+        geometry = screen.availableGeometry()
+        scale = screen.devicePixelRatio()
+
+        screen_x = int(geometry.x() * scale)
+        screen_y = int(geometry.y() * scale)
+        screen_w = int(geometry.width() * scale)
+        screen_h = int(geometry.height() * scale)
+
+        window_x = screen_x + (screen_w - self.window_w) // 2
+        window_y = screen_y + (screen_h - self.window_h) // 2
 
         self.window = gui.Application.instance.create_window(
             "CNCMotionMaker",
-            1000,
-            720
+            self.window_w,
+            self.window_h,
+            window_x,
+            window_y,
         )
+        
+        self.project_root = root_path
+        self.scene_manager = SceneViewManager()
+
         self.control_panel_collapsed = False
         self.scene_view = SceneView(self.window)
         self.scene_manager.add_view(self.scene_view)
         
         self.extra_windows = []
         self.extra_scene_views = []
+        self.extra_view_numbers = {}
 
-        for i in range(view_count - 1):
-            self._create_extra_view(i + 2)
-
-
-        for extra_scene_view in self.extra_scene_views:
-            self.scene_manager.add_view(extra_scene_view)
+        self.current_json_path = None
 
         set_open3d_window_icon(
             "CNCMotionMaker",
@@ -168,9 +183,26 @@ class MainWindow:
             on_json_selected=self.on_json_selected,
             on_toggle_panel=self.toggle_control_panel,
         )
+        self.add_view_button = gui.Button("+ View")
+        self.add_view_button.background_color = gui.Color(
+            0.15, 0.45, 0.15, 1.0
+        )
+        self.add_view_button.set_on_clicked(
+            self._on_add_view_clicked
+        )
+        self.remove_view_button = gui.Button("- View")
+        self.remove_view_button.background_color = gui.Color(
+            0.50, 0.08, 0.08, 1.0,
+        )
+        self.remove_view_button.set_on_clicked(
+            self._on_remove_view_clicked
+        )
+        self.remove_view_button.enabled = False
 
         self.window.add_child(self.scene_view.widget)
         self.window.add_child(self.control_panel.widget)
+        self.window.add_child(self.add_view_button)
+        self.window.add_child(self.remove_view_button)
 
         self.window.set_on_layout(self._on_layout)
         self.window.set_on_close(self._on_close)
@@ -178,43 +210,107 @@ class MainWindow:
         self.axis_window = AxisControlWindowQt(
             on_joint_move=self.on_joint_move
         )
-        self.axis_window.show()
-        make_tool_window(
-            child_title=self.axis_window.windowTitle(),
-            owner_title=self.window.title,
-        )
         self.program_window = MachinePanelQt(
             on_position_sample=self.apply_program_position
         )
         self._last_program_position = None
-        self.program_window.show()
-        make_tool_window(
-            child_title=self.program_window.windowTitle(),
-            owner_title=self.window.title,
-        )
 
         gui.Application.instance.post_to_main_thread(
             self.window,
             self._initialize_window_layout
         )
-    
-    def _initialize_window_layout(self):
-        self._arrange_open3d_windows()
 
+    def _on_add_view_clicked(self):
+        if len(self._get_open3d_windows()) >= 4:
+            print("Open3D views are limited to 4.")
+            return
+
+        self.add_view_button.enabled = False
+        self.remove_view_button.enabled = False
+
+        gui.Application.instance.post_to_main_thread(
+            self.window,
+            self._add_extra_view
+        )
+    
+    def _add_extra_view(self):
+        try:
+            view_no = self._get_next_view_no()
+            if view_no is None:
+                return
+
+            extra_window, extra_scene_view = self._create_extra_view(view_no)
+            self.scene_manager.add_view(extra_scene_view)
+
+            if self.current_json_path is not None:
+                extra_scene_view.load_json_model(self.current_json_path)
+
+            extra_window.set_needs_layout()
+            extra_scene_view.widget.force_redraw()
+
+            self._arrange_open3d_windows()
+            self._move_sub_window()
+
+            gui.Application.instance.post_to_main_thread(
+                extra_window,
+                lambda w=extra_window:
+                    self._finish_extra_window(w)
+            )
+
+        except Exception:
+            traceback.print_exc()
+
+        finally:
+            self._view_add_remove_btn_update()
+
+    def _get_next_view_no(self):
+        used_numbers = set(
+            self.extra_view_numbers.values()
+        )
+
+        for view_no in range(2, 5):
+            if view_no not in used_numbers:
+                return view_no
+
+        return None
+
+    def _finish_extra_window(self, extra_window):
+        view_no = self.extra_view_numbers.get(id(extra_window))
+        if view_no is None:
+            return
+    
+        title = f"SubView {view_no}"
+
+        extra_window.set_needs_layout()
+
+        make_tool_window(
+            child_title=title,
+            owner_title=self.window.title,
+        )
+
+        if self.project_root is not None:
+            set_open3d_window_icon(
+                title,
+                self.project_root / "assets" / "icon.ico"
+            )
+            
+    def _initialize_window_layout(self):
         self.window.set_needs_layout()
         self.scene_view.widget.force_redraw()
-
-        for extra_window, extra_view in zip(
-            self.extra_windows,
-            self.extra_scene_views
-        ):
-            extra_window.set_needs_layout()
-            extra_view.widget.force_redraw()
-
         self._move_sub_window()
 
-    def _get_open3d_windows(self):
-        return [self.window] + list(self.extra_windows)
+        self.axis_window.show()
+        self.program_window.show()
+
+        make_tool_window(
+            child_title=self.axis_window.windowTitle(),
+            owner_title=self.window.title,
+        )
+
+        make_tool_window(
+            child_title=self.program_window.windowTitle(),
+            owner_title=self.window.title,
+        )
 
     def _arrange_open3d_windows(self):
         windows = self._get_open3d_windows()
@@ -222,8 +318,6 @@ class MainWindow:
 
         if not 2 <= count <= 4:
             return
-
-        from PySide6.QtWidgets import QApplication
 
         screen = QApplication.primaryScreen()
         if screen is None:
@@ -281,30 +375,76 @@ class MainWindow:
                 sub_x, sub_y, width, main_h
             )
 
+    def _get_open3d_windows(self):
+        return [self.window] + list(self.extra_windows)
+    
+    def _view_add_remove_btn_update(self):
+        sub_count = self.scene_manager.sub_view_count()
+        self.remove_view_button.enabled = sub_count > 0
+        self.add_view_button.enabled = sub_count < 3
+
+    def _on_remove_view_clicked(self):
+        if not self.extra_windows:
+            return
+        
+        self.add_view_button.enabled = False
+        self.remove_view_button.enabled = False
+
+        gui.Application.instance.post_to_main_thread(
+            self.window,
+            self._remove_last_view
+        )
+
+    def _remove_last_view(self):
+        if not self.extra_windows:
+            return
+
+        self._close_extra_view(
+            self.extra_windows[-1],
+            self.extra_scene_views[-1],
+        )
+
     def _create_extra_view(self, view_no):
         title = f"SubView {view_no}"
 
+        camera_views = {
+            2: "front",
+            3: "right",
+            4: "top",
+        }
+
+        default_camera_view = camera_views.get(view_no, "default")
+        
         extra_window = gui.Application.instance.create_window(
             title,
-            1000,
-            720
+            self.window_w,
+            self.window_h
         )
 
         extra_scene_view = SceneView(
             extra_window,
-            on_mouse_down=None
+            on_mouse_down=None,
+            default_camera_view=default_camera_view
+        )
+
+        close_button = gui.Button("×")
+        close_button.background_color = gui.Color(
+            0.50, 0.08, 0.08, 1.0,
+        )
+        close_button.set_on_clicked(
+            lambda w=extra_window, v=extra_scene_view:
+                self._on_extra_close_button(w, v)
         )
 
         extra_window.add_child(extra_scene_view.widget)
+        extra_window.add_child(close_button)
 
         extra_window.set_on_layout(
-            lambda layout_context, w=extra_window, v=extra_scene_view:
-                self._on_extra_layout(w, v)
-        )
-
-        extra_window.set_on_close(
-            lambda w=extra_window, v=extra_scene_view:
-                self._on_extra_close(w, v)
+            lambda layout_context,
+            w=extra_window,
+            v=extra_scene_view,
+            b=close_button:
+                self._on_extra_layout(w, v, b)
         )
 
         extra_window.set_needs_layout()
@@ -312,24 +452,21 @@ class MainWindow:
         self.extra_windows.append(extra_window)
         self.extra_scene_views.append(extra_scene_view)
 
-        make_tool_window(
-            child_title=title,
-            owner_title=self.window.title,
-        )
+        self.extra_view_numbers[id(extra_window)] = view_no
 
-    def _on_extra_close(self, extra_window, extra_scene_view):
-        self.scene_manager.remove_view(extra_scene_view)
+        return extra_window, extra_scene_view
 
-        if extra_window in self.extra_windows:
-            self.extra_windows.remove(extra_window)
-
-        if extra_scene_view in self.extra_scene_views:
-            self.extra_scene_views.remove(extra_scene_view)
-
-        return True
-
-    def _on_extra_layout(self, extra_window, extra_scene_view):
+    def _on_extra_layout(
+        self,
+        extra_window,
+        extra_scene_view,
+        close_button,
+    ):
         rect = extra_window.content_rect
+        em = extra_window.theme.font_size
+
+        button_size = int(2.0 * em)
+        margin = int(0.5 * em)
 
         extra_scene_view.widget.frame = gui.Rect(
             rect.x,
@@ -338,6 +475,50 @@ class MainWindow:
             rect.height
         )
 
+        close_button.frame = gui.Rect(
+            rect.x + rect.width - button_size - margin,
+            rect.y + margin,
+            button_size,
+            button_size,
+        )
+
+    def _on_extra_close_button(
+        self,
+        extra_window,
+        extra_scene_view,
+    ):
+        gui.Application.instance.post_to_main_thread(
+            self.window,
+            lambda: self._close_extra_view(
+                extra_window,
+                extra_scene_view,
+            )
+        )
+
+    def _close_extra_view(
+        self,
+        extra_window,
+        extra_scene_view,
+    ):
+        if extra_window not in self.extra_windows:
+            return
+
+        index = self.extra_windows.index(extra_window)
+
+        self.scene_manager.remove_view(
+            extra_scene_view
+        )
+
+        self.extra_windows.pop(index)
+        self.extra_scene_views.pop(index)
+        self.extra_view_numbers.pop(id(extra_window), None)
+
+        extra_window.close()
+
+        self._arrange_open3d_windows()
+        self._move_sub_window()
+        self._view_add_remove_btn_update()
+        
     def toggle_control_panel(self):
         self.control_panel_collapsed = not self.control_panel_collapsed
         self.window.set_needs_layout()
@@ -348,9 +529,33 @@ class MainWindow:
         em = self.window.theme.font_size
 
         if self.control_panel_collapsed:
-            panel_width = int(1.0 * em)
+            panel_width = int(1.5 * em)
         else:
             panel_width = int(10 * em)
+
+        button_width = int(4 * em)
+        button_height = int(2 * em)
+        margin = int(0.5 * em)
+
+        self.remove_view_button.frame = gui.Rect(
+            rect.x + rect.width
+            - panel_width
+            - button_width
+            - margin,
+            rect.y + margin * 2 + button_height,
+            button_width,
+            button_height,
+        )
+
+        self.add_view_button.frame = gui.Rect(
+            rect.x + rect.width
+            - panel_width
+            - button_width
+            - margin,
+            rect.y + margin,
+            button_width,
+            button_height
+        )
 
         self.scene_view.widget.frame = gui.Rect(
             rect.x,
@@ -368,6 +573,8 @@ class MainWindow:
 
     def on_json_selected(self, json_path):
         print("Load JSON:", json_path)
+
+        self.current_json_path = json_path
         try:
             self.scene_manager.load_json_model(json_path)
 
@@ -455,8 +662,6 @@ class MainWindow:
             self.program_window.close()
             self.program_window = None
 
-        from PySide6.QtWidgets import QApplication
-
         app = QApplication.instance()
         if app is not None:
             app.processEvents()
@@ -465,8 +670,8 @@ class MainWindow:
             self.scene_manager.remove_view(view)
 
         self.extra_scene_views.clear()
-
         self.extra_windows.clear()
+        self.extra_view_numbers.clear()
 
         return True
 

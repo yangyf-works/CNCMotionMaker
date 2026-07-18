@@ -21,8 +21,11 @@ from core.model_builder import (
 import traceback
 
 class SceneView:
-    def __init__(self, window, on_mouse_down= None):
+    def __init__(self, window, 
+                 on_mouse_down= None,
+                 default_camera_view="default",):
         self.window = window
+        self.default_camera_view = default_camera_view
         self.widget = gui.SceneWidget()
 
         self.widget.scene = rendering.Open3DScene(
@@ -353,17 +356,64 @@ class SceneView:
         if hasattr(self, "roots") and self.roots:
             for root in self.roots:
                 update_world_transform(root)
+
             bounds = self.get_scene_bbox()
         else:
             bounds = self.widget.scene.bounding_box
 
+        center = np.asarray(bounds.get_center(), dtype=float)
         self.widget.setup_camera(
             60.0,
             bounds,
-            bounds.get_center()
+            center
         )
+        self.widget.center_of_rotation = center
+        camera_model = np.asarray(self.widget.scene.camera.get_model_matrix())
 
-        self.widget.center_of_rotation = bounds.get_center()
+        current_eye = camera_model[:3, 3]
+        distance = np.linalg.norm(current_eye - center)
+
+        if distance <= 1e-9:
+            distance = 1.0
+
+        camera_settings = {
+            "top": (
+                np.array([0.0, 1.0, 0.0]),
+                np.array([0.0, 0.0, -1.0]),
+            ),
+
+            "right": (
+                np.array([1.0, 0.0, 0.0]),
+                np.array([0.0, 1.0, 0.0]),
+            ),
+            "front": (
+                np.array([0.0, 0.0, 1.0]),
+                np.array([0.0, 1.0, 0.0]),
+            ),
+        }
+
+        setting = camera_settings.get(self.default_camera_view)
+
+        if setting is not None:
+            direction, up = setting
+            eye = center + direction * distance
+
+            self.widget.look_at(
+                center,
+                eye,
+                up
+            )
+        else:
+            direction = np.array([1.0, 1.0, 1.0])
+            up = np.array([0.0, 1.0, 0.0])
+            eye = center + direction * distance * 0.7
+
+            self.widget.look_at(
+                center,
+                eye,
+                up
+            )
+
         self.widget.force_redraw()
 
     def on_save_stl(self):
