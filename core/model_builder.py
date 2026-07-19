@@ -142,10 +142,14 @@ def build_node(node_def, defs, base_dir, path="", flip_normal=False):
     show_when = node_def.get("show_when", None)
     if isinstance(show_when, str):
         s = show_when.strip().lower()
-        if s in ("ON", "On", "on", "1", "true"):
+        if s in ("on", "1", "true"):
             show_when = True
-        elif s in ("OFF", "Off", "off", "0", "false"):
+        elif s in ("off", "0", "false"):
             show_when = False
+        else:
+            raise ValueError(
+                f"Invalid show_when value: {show_when}"
+            )
     node.show_when = show_when
 
     if "_local_T" in node_def:
@@ -208,10 +212,17 @@ def build_node(node_def, defs, base_dir, path="", flip_normal=False):
 
     return node
 
-def update_world_transform(node, parent_T=np.eye(4)):
-    joint_T = make_joint_transform(node.joint, node.joint_value)
+def update_all_world_transforms(roots):
+    for root in roots:
+        update_world_transform(root)
 
-    node.world_T = parent_T @ node.local_T @ joint_T
+def update_world_transform(node, parent_T=None):
+    if parent_T is None:
+        parent_T = np.eye(4)
+
+    node.joint_base_T = parent_T @ node.local_T
+    joint_T = make_joint_transform(node.joint, node.joint_value)
+    node.world_T = node.joint_base_T @ joint_T
 
     if node.joint is not None and node.joint.type == "chain":
         update_chain_carriers(node)
@@ -231,23 +242,44 @@ def paint_meshes(node, color_index=0):
     for child in node.children:
         paint_meshes(child, color_index)
 
-def collect_meshes(node, out_list, hidden=False):
-    if hidden:
-        return
+def collect_visible_meshes(roots):
+    result = []
 
-    for mesh in node.meshes:
-        out_list.append((mesh, node.world_T))
+    def walk(node, hidden=False):
+        if hidden:
+            return
 
-    for child in node.children:
-        child_hidden = hidden
+        for mesh in node.meshes:
+            result.append(
+                {
+                    "node": node,
+                    "mesh": mesh,
+                    "world_T": node.world_T.copy(),
+                }
+            )
 
-        if (node.joint is not None and node.joint.type == "signal"):
-            signal_on = bool(node.joint_value)
+        for child in node.children:
+            child_hidden = False
 
-            if child.show_when is not None:
-                child_hidden = (child.show_when != signal_on)
+            if (
+                node.joint is not None
+                and node.joint.type == "signal"
+                and child.show_when is not None
+            ):
+                signal_on = bool(
+                    node.joint_value
+                )
+                child_hidden = (
+                    child.show_when
+                    != signal_on
+                )
 
-        collect_meshes(child, out_list, child_hidden)
+            walk(child, child_hidden)
+
+    for root in roots:
+        walk(root)
+
+    return result
 
 def build_geometry_list_from_model_json(data, base_dir):
     defs = data["definitions"]
@@ -262,22 +294,19 @@ def build_geometry_list_from_model_json(data, base_dir):
         )
         roots.append(root)
 
-    for root in roots:
-        update_world_transform(root)
-
+    update_all_world_transforms(roots)
     normalize_joint_names(roots)
 
     for root in roots:
         paint_meshes(root)
 
-    all_meshes = []
-
-    for root in roots:
-        collect_meshes(root, all_meshes)
-
+    all_meshes = collect_visible_meshes(roots)
     geometry_list = []
 
-    for mesh, world_T in all_meshes:
+    for item in all_meshes:
+        mesh = item["mesh"]
+        world_T = item["world_T"]
+
         m = o3d.geometry.TriangleMesh(mesh)
         m.transform(world_T)
         geometry_list.append(m)
@@ -335,12 +364,12 @@ def collect_all_joint_info(roots):
 def collect_export_meshes(roots):
     merged = o3d.geometry.TriangleMesh()
 
-    all_meshes = []
+    all_meshes = collect_visible_meshes(roots)
 
-    for root in roots:
-        collect_meshes(root, all_meshes)
+    for item in all_meshes:
+        mesh = item["mesh"]
+        world_T = item["world_T"]
 
-    for mesh, world_T in all_meshes:
         mesh_copy = copy.deepcopy(mesh)
         mesh_copy.transform(world_T)
         merged += mesh_copy
@@ -433,7 +462,6 @@ def update_chain_carriers(chain_node):
         old_y = carrier.local_T[:3, 1]
         T = np.eye(4)
         T[:3, :3] = make_axis_rotation(direction, old_y)
-        T[:3, 3] = pos
         T[:3, 3] = pos
 
         carrier.local_T = T

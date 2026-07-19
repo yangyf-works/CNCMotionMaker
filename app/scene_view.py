@@ -14,16 +14,20 @@ from core.chain_utils import (
     get_carrier_positions,
 )
 from core.model_builder import (
-    update_world_transform,
-    collect_meshes,
+    update_all_world_transforms,
+    collect_visible_meshes,
 )
 
 import traceback
+import time
 
 class SceneView:
-    def __init__(self, window, 
-                 on_mouse_down= None,
-                 default_camera_view="default",):
+    def __init__(
+        self, window, 
+        on_mouse_down= None,
+        on_model_selected=None,
+        default_camera_view="default"
+        ):
         self.window = window
         self.default_camera_view = default_camera_view
         self.widget = gui.SceneWidget()
@@ -40,9 +44,7 @@ class SceneView:
 
         self.model_geometries = []
         self.geometry_names = set()
-
         self.roots = []
-        self._create_test_geometry()
 
         self.window.set_on_key(self._on_key)
         self.on_mouse_down = on_mouse_down
@@ -71,6 +73,20 @@ class SceneView:
         self.show_axis = False
         self.joint_axis_labels = []
 
+        self.on_model_selected = on_model_selected
+        self.selected_joint = None
+        self.selected_joint_node = None
+        self.selected_joint_lock_T = None
+
+        self._last_click_time = 0.0
+        self._last_click_pos = None
+
+        self.double_click_interval = 0.3
+        self.double_click_distance = 5
+
+        self.initial_camera_state = None
+        self._create_test_geometry()
+
     def _create_test_geometry(self):
         axis = o3d.geometry.TriangleMesh.create_coordinate_frame(
             size=1.0
@@ -83,7 +99,8 @@ class SceneView:
         )
 
         self.geometry_names.add("axis")
-        self.on_reset_camera()
+        self.fit_camera_to_model(axis)
+        self.save_initial_camera_state()
 
     def clear_scene(self):
         self.geometry_names.clear()
@@ -92,15 +109,19 @@ class SceneView:
 
     def load_json_model(self, json_path: Path):
         try:
+            self.clear_selected_joint(
+                refresh=False,
+                notify=False,
+            )
+            
             with open(json_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
-            self._build_model_from_json(
-                data,
-                json_path
-            )
+            self._build_model_from_json(data, json_path)
             self.refresh_model()
-            self.on_reset_camera()
+
+            self.fit_camera_to_model()
+            self.save_initial_camera_state()
 
         except Exception:
             traceback.print_exc()
@@ -186,14 +207,26 @@ class SceneView:
     
     def _on_mouse(self, event):
         alt = event.is_modifier_down(gui.KeyModifier.ALT)
+        ctrl = event.is_modifier_down(gui.KeyModifier.CTRL)
 
-        if event.type == gui.MouseEvent.Type.BUTTON_DOWN: 
+        if event.type == gui.MouseEvent.Type.BUTTON_DOWN:
             if self.on_mouse_down is not None:
                 self.on_mouse_down()
-            if event.is_button_down(gui.MouseButton.MIDDLE) or alt:
+
+            if (event.is_button_down(gui.MouseButton.LEFT)
+                and ctrl
+                and self._is_double_click(event)
+            ):
+                if self.pick_model(event.x, event.y) is None:
+                    self.clear_selected_joint()
+
+                return gui.Widget.EventCallbackResult.HANDLED
+
+            if (event.is_button_down(gui.MouseButton.MIDDLE) or alt):
                 self.sun_dragging = True
                 self.last_mouse_x = event.x
                 self.last_mouse_y = event.y
+
                 return gui.Widget.EventCallbackResult.HANDLED
 
         if event.type == gui.MouseEvent.Type.BUTTON_UP:
@@ -297,69 +330,141 @@ class SceneView:
             self.window,
             lambda:self.refresh_model(model_reset)
         )
-    
+
+    def get_display_correction_T(self):
+        if (
+            self.selected_joint_node is None
+            or self.selected_joint_lock_T is None
+        ):
+            return np.eye(4)
+
+        try:
+            return (
+                self.selected_joint_lock_T
+                @ np.linalg.inv(
+                    self.selected_joint_node.world_T
+                )
+            )
+        except np.linalg.LinAlgError:
+            return np.eye(4)
+        
     def refresh_model(self, model_reset=True):
-        for root in self.roots:
-            update_world_transform(root)
+        update_all_world_transforms(self.roots)
+        correction_T = self.get_display_correction_T()
 
         if model_reset:
             self.clear_scene()
-            geometry_list = []
             self.model_geometries = []
 
-            for root in self.roots:
-                collect_meshes(root, geometry_list)
+            geometry_list = collect_visible_meshes(self.roots)
+            for i, item in enumerate(geometry_list):
+                node = item["node"]
+                mesh = item["mesh"]
+                world_T = item["world_T"]
+                display_T = correction_T @ world_T
 
-            for i, (mesh, world_T) in enumerate(geometry_list):
                 m = o3d.geometry.TriangleMesh(mesh)
                 m.compute_triangle_normals()
 
                 name = f"model_{i}"
-
                 self.widget.scene.add_geometry(
                     name,
                     m,
                     self.material
                 )
 
-                self.widget.scene.set_geometry_transform(name, world_T)
-
+                self.widget.scene.set_geometry_transform(name, display_T)
                 self.geometry_names.add(name)
-                self.model_geometries.append((name, mesh))
+                self.model_geometries.append(
+                    {
+                        "name": name,
+                        "node": node,
+                        "mesh": mesh,
+                    }
+                )
+
         else:
             if not self.model_geometries:
                 return self.refresh_model(model_reset=True)
-            
-            geometry_list = []
 
-            for root in self.roots:
-                collect_meshes(root, geometry_list)
+            geometry_list = collect_visible_meshes(self.roots)
 
             if len(geometry_list) != len(self.model_geometries):
                 return self.refresh_model(model_reset=True)
-            
-            for i, (_, world_T) in enumerate(geometry_list):
-                name, _mesh = self.model_geometries[i]
+
+            for i, item in enumerate(geometry_list):
+                world_T = item["world_T"]
+                display_T = correction_T @ world_T
+
+                geometry_info = self.model_geometries[i]
+                name = geometry_info["name"]
 
                 if name not in self.geometry_names:
                     return self.refresh_model(model_reset=True)
 
-                self.widget.scene.set_geometry_transform(name, world_T)
+                self.widget.scene.set_geometry_transform(name, display_T)
 
         if self.show_axis:
             self.show_joint_axes()
         else:
             self.clear_joint_axes()
 
-    
-    def on_reset_camera(self):
-        if hasattr(self, "roots") and self.roots:
-            for root in self.roots:
-                update_world_transform(root)
+    def save_initial_camera_state(self):
+        camera = self.widget.scene.camera
+        model = np.asarray(camera.get_model_matrix(), dtype=float)
 
+        self.initial_camera_state = {
+            "eye": model[:3, 3].copy(),
+            "up": model[:3, 1].copy(),
+            "center": np.asarray(
+                self.widget.center_of_rotation,
+                dtype=float,
+            ).copy(),
+            "fov": float(
+                camera.get_field_of_view()
+            ),
+        }
+
+    def restore_initial_camera_state(self):
+        state = self.initial_camera_state
+
+        if state is None:
+            return
+
+        eye = state["eye"].copy()
+        center = state["center"].copy()
+        up = state["up"].copy()
+        fov = state["fov"]
+
+        if self.roots:
             bounds = self.get_scene_bbox()
         else:
             bounds = self.widget.scene.bounding_box
+
+        self.widget.setup_camera(
+            fov,
+            bounds,
+            center,
+        )
+
+        self.widget.center_of_rotation = center
+        self.widget.look_at(
+            center,
+            eye,
+            up,
+        )
+
+        self.widget.force_redraw()
+
+    def fit_camera_to_model(self, geometry=None):
+        if geometry is not None:
+            bounds = self.widget.scene.bounding_box
+        else:
+            if not self.roots:
+                return
+
+            update_all_world_transforms(self.roots)
+            bounds = self.get_scene_bbox()
 
         center = np.asarray(bounds.get_center(), dtype=float)
         self.widget.setup_camera(
@@ -368,7 +473,7 @@ class SceneView:
             center
         )
         self.widget.center_of_rotation = center
-        camera_model = np.asarray(self.widget.scene.camera.get_model_matrix())
+        camera_model = np.asarray(self.widget.scene.camera.get_model_matrix(), dtype=float)
 
         current_eye = camera_model[:3, 3]
         distance = np.linalg.norm(current_eye - center)
@@ -381,7 +486,6 @@ class SceneView:
                 np.array([0.0, 1.0, 0.0]),
                 np.array([0.0, 0.0, -1.0]),
             ),
-
             "right": (
                 np.array([1.0, 0.0, 0.0]),
                 np.array([0.0, 1.0, 0.0]),
@@ -397,25 +501,24 @@ class SceneView:
         if setting is not None:
             direction, up = setting
             eye = center + direction * distance
-
-            self.widget.look_at(
-                center,
-                eye,
-                up
-            )
         else:
             direction = np.array([1.0, 1.0, 1.0])
             up = np.array([0.0, 1.0, 0.0])
-            eye = center + direction * distance * 0.7
 
-            self.widget.look_at(
-                center,
-                eye,
-                up
-            )
+            direction /= np.linalg.norm(direction)
+            eye = center + direction * distance * 1.2
+
+        self.widget.look_at(
+            center,
+            eye,
+            up,
+        )
 
         self.widget.force_redraw()
 
+    def on_reset_camera(self):
+        self.restore_initial_camera_state()
+        
     def on_save_stl(self):
         print("Save STL")
         merged = collect_export_meshes(self.roots)
@@ -681,17 +784,40 @@ class SceneView:
         else:
             self.clear_joint_axes()
 
+    def get_node_bbox(self, node):
+        correction_T = self.get_display_correction_T()
+        bbox = None
+
+        for item in collect_visible_meshes([node]):
+            mesh_world = o3d.geometry.TriangleMesh(item["mesh"])
+
+            display_T = correction_T @ item["world_T"]
+            mesh_world.transform(display_T)
+
+            mesh_bbox = (
+                mesh_world.get_axis_aligned_bounding_box()
+            )
+
+            if bbox is None:
+                bbox = mesh_bbox
+            else:
+                bbox += mesh_bbox
+
+        return bbox
+
     def show_joint_axes(self):
         self.clear_joint_axes()
-
-        bbox = self.get_scene_bbox()
+        scene_bbox = self.get_scene_bbox()
 
         for node in self.iter_joint_nodes():
             joint = node.joint
-
             origin, direction = self.get_joint_axis_info(node, joint)
 
             if origin is None or direction is None:
+                continue
+
+            bbox = self.get_node_bbox(node)
+            if bbox is None:
                 continue
 
             color = self.get_joint_axis_color(joint)
@@ -699,6 +825,7 @@ class SceneView:
 
             match joint.type:
                 case "rotate":
+                    bbox = scene_bbox
                     self.create_axis_line(
                         name=f"joint_axis_{node.name}",
                         axistype=joint.type,
@@ -706,14 +833,15 @@ class SceneView:
                         direction=direction,
                         bbox=bbox,
                         color=color,
+                        type="plusinfinite",
                         label=label_text,
                     )
 
                 case "linear":
                     self.create_axis_line(
-                        name=f"joint_axis_{node.name}_plus",
+                        name=f"joint_axis_{node.name}_minus",
                         axistype=joint.type,
-                        origin=node.world_T[:3, 3],
+                        origin=origin,
                         direction=direction,
                         bbox=bbox,
                         color=color,
@@ -722,9 +850,9 @@ class SceneView:
                     )
 
                     self.create_axis_line(
-                        name=f"joint_axis_{node.name}_minus",
+                        name=f"joint_axis_{node.name}_plus",
                         axistype=joint.type,
-                        origin=node.world_T[:3, 3],
+                        origin=origin,
                         direction=direction,
                         bbox=bbox,
                         color=[1.0 - c for c in color],
@@ -737,10 +865,7 @@ class SceneView:
 
                 case "signal":
                     continue
-
-                case _:
-                    continue
-
+                
     def clear_joint_axes(self):
         if not hasattr(self, "axis_geometry_names"):
             self.axis_geometry_names = []
@@ -756,36 +881,39 @@ class SceneView:
         self.joint_axis_labels.clear()
 
     def get_joint_axis_info(self, node, joint):
-        # 軸方向を取得
         axis = getattr(joint, "axis", None)
-        type = getattr(joint, "type", None)
-        pivot = getattr(joint, "pivot", np.array([0.0, 0.0, 0.0]))
+        joint_type = getattr(joint, "type", None)
+        pivot = np.asarray(
+            getattr(joint, "pivot", [0, 0, 0]),
+            dtype=float,
+        )
 
-        if axis is None:
-            local_axis = np.array([0.0, 0.0, 1.0])
-        else:
-            local_axis = np.asarray(axis, dtype=float)
+        local_axis = np.asarray(
+            axis if axis is not None else [0, 0, 1],
+            dtype=float,
+        )
 
         norm = np.linalg.norm(local_axis)
         if norm < 1e-9:
             return None, None
 
-        local_axis = local_axis / norm
+        local_axis /= norm
 
-        world_direction = node.world_T[:3, :3] @ local_axis
+        base_T = getattr(node, "joint_base_T", node.world_T,)
 
-        norm = np.linalg.norm(world_direction)
-        if norm < 1e-9:
+        display_T = self.get_display_correction_T() @ base_T
+        direction = display_T[:3, :3] @ local_axis
+        direction_norm = np.linalg.norm(direction)
+        if direction_norm < 1e-9:
             return None, None
+        direction /= direction_norm
 
-        world_direction = world_direction / norm
-
-        if type == "rotate":
-            world_origin = node.world_T[:3, 3] + node.world_T[:3, :3] @ pivot
+        if joint_type == "rotate":
+            origin = display_T[:3, 3] + display_T[:3, :3] @ pivot
         else:
-            world_origin = node.world_T[:3, 3]
+            origin = display_T[:3, 3]
 
-        return world_origin, world_direction
+        return origin, direction
     
     def get_joint_axis_color(self, joint):
         joint_type = getattr(joint, "type", "")
@@ -831,15 +959,34 @@ class SceneView:
 
         points.sort(key=lambda x: x[0])
 
-        if type == "infinite":
-            p1 = points[0][1]
-            p2 = points[-1][1]
+        scene_size = np.linalg.norm(bbox.get_extent())
+        outside_length = max(scene_size * 0.2, 1.0)
+
+        negative_surface = points[0][1]
+        positive_surface = points[-1][1]
+
+        if type == "plusinfinite":
+            p1 = origin
+            p2 = positive_surface
+
         elif type == "plusonly":
-            p1 = origin
-            p2 = points[-1][1]
+            p1 = positive_surface
+            p2 = positive_surface + direction * outside_length
+
         elif type == "minusonly":
-            p1 = origin
-            p2 = points[0][1]
+            p1 = negative_surface
+            p2 = negative_surface - direction * outside_length
+        
+        else:
+            p1 = negative_surface
+            p2 = positive_surface
+
+        if (
+            not np.all(np.isfinite(p1))
+            or not np.all(np.isfinite(p2))
+            or np.linalg.norm(p2 - p1) <= 1e-6
+        ):
+            return None
 
         if label is not None:
             label_pos = p2
@@ -939,20 +1086,28 @@ class SceneView:
         self.axis_geometry_names.append(name)
         
     def get_scene_bbox(self):
-        bboxes = []
+        correction_T = self.get_display_correction_T()
+        bbox = None
 
-        for root in self.roots:
-            self._collect_bboxes(root, bboxes)
+        for item in collect_visible_meshes(self.roots):
+            mesh_world = o3d.geometry.TriangleMesh(
+                item["mesh"]
+            )
 
-        if not bboxes:
+            display_T = correction_T @ item["world_T"]
+            mesh_world.transform(display_T)
+            mesh_bbox = mesh_world.get_axis_aligned_bounding_box()
+
+            if bbox is None:
+                bbox = mesh_bbox
+            else:
+                bbox += mesh_bbox
+
+        if bbox is None:
             return o3d.geometry.AxisAlignedBoundingBox(
                 min_bound=[-50, -50, -50],
                 max_bound=[50, 50, 50],
             )
-
-        bbox = bboxes[0]
-        for b in bboxes[1:]:
-            bbox += b
 
         return bbox
 
@@ -1009,8 +1164,13 @@ class SceneView:
 
         if line_set is None:
             return
+        
+        display_T = (
+            self.get_display_correction_T()
+            @ node.world_T
+        )
 
-        line_set.transform(node.world_T)
+        line_set.transform(display_T)
 
         geom_name = f"axis_chain_{joint.name or node.name}"
 
@@ -1094,3 +1254,202 @@ class SceneView:
 
         print(f"Axis not found: {axis_name}")
         return False
+    
+    def _is_double_click(self, event):
+        now = time.monotonic()
+        pos = np.array([event.x, event.y], dtype=float)
+
+        is_double = False
+
+        if self._last_click_pos is not None:
+            elapsed = now - self._last_click_time
+            distance = np.linalg.norm(pos - self._last_click_pos)
+
+            is_double = (
+                elapsed <= self.double_click_interval
+                and distance <= self.double_click_distance
+            )
+
+        if is_double:
+            self._last_click_time = 0.0
+            self._last_click_pos = None
+        else:
+            self._last_click_time = now
+            self._last_click_pos = pos
+
+        return is_double
+    
+    def pick_model(self, mouse_x, mouse_y):
+        frame = self.widget.frame
+
+        local_x = int(mouse_x - frame.x)
+        local_y = int(mouse_y - frame.y)
+
+        width = int(frame.width)
+        height = int(frame.height)
+
+        if (width <= 0
+            or height <= 0
+            or local_x < 0
+            or local_y < 0
+            or local_x >= width
+            or local_y >= height
+        ):
+            return None
+
+        selectable_meshes = collect_visible_meshes(self.roots)
+
+        if not selectable_meshes:
+            return None
+
+        ray_scene = o3d.t.geometry.RaycastingScene()
+        geometry_id_to_item = {}
+        correction_T = self.get_display_correction_T()
+
+        for item in selectable_meshes:
+            mesh_world = o3d.geometry.TriangleMesh(item["mesh"])
+            display_T = (correction_T @ item["world_T"])
+            mesh_world.transform(display_T)
+
+            if len(mesh_world.triangles) == 0:
+                continue
+
+            tensor_mesh = (o3d.t.geometry.TriangleMesh.from_legacy(mesh_world))
+            geometry_id = ray_scene.add_triangles(tensor_mesh)
+            geometry_id_to_item[int(geometry_id)] = item
+
+        if not geometry_id_to_item:
+            return None
+
+        camera = self.widget.scene.camera
+        camera_model = np.asarray(
+            camera.get_model_matrix(),
+            dtype=np.float64,
+        )
+        eye = camera_model[:3, 3]
+        world_point = np.asarray(
+            camera.unproject(
+                local_x + 0.5,
+                local_y + 0.5,
+                0.5,
+                width,
+                height,
+            ),
+            dtype=np.float64,
+        )
+
+        ray_direction = world_point - eye
+        length = np.linalg.norm(ray_direction)
+
+        if (not np.all(np.isfinite(eye))
+            or not np.all(np.isfinite(world_point))
+            or not np.isfinite(length)
+            or length <= 1e-9
+        ):
+            print(
+                "Invalid pick ray:",
+                "eye =", eye,
+                "world_point =", world_point,
+                "length =", length,
+            )
+            return None
+
+        ray_direction /= length
+
+        ray = o3d.core.Tensor(
+            [[
+                eye[0],
+                eye[1],
+                eye[2],
+                ray_direction[0],
+                ray_direction[1],
+                ray_direction[2],
+            ]],
+            dtype=o3d.core.Dtype.Float32,
+        )
+
+        result = ray_scene.cast_rays(ray)
+        geometry_id = int(result["geometry_ids"][0].item())
+        invalid_id = o3d.t.geometry.RaycastingScene.INVALID_ID
+        if geometry_id == invalid_id:
+            return None
+
+        item = geometry_id_to_item.get(geometry_id)
+        if item is None:
+            return None
+
+        hit_node = item["node"]
+        selected = self.find_nearest_joint(hit_node)
+        if selected is None:
+            return None
+        
+        joint_node, joint = selected
+        self.selected_joint = joint
+        self.selected_joint_node = joint_node
+        self.selected_joint_lock_T = joint_node.world_T.copy()
+
+        self.refresh_model(model_reset=False)
+
+        print(
+            f"Selected joint: {self.selected_joint.name} "
+            f"({self.selected_joint.type})"
+        )
+
+        if self.on_model_selected is not None:
+            self.on_model_selected(self.selected_joint)
+
+        return self.selected_joint
+  
+    def find_nearest_joint(self, target_node):
+        selectable_types = {
+            "linear",
+            "rotate",
+        }
+
+        result = None
+
+        def walk(node, nearest=None):
+            nonlocal result
+
+            joint = node.joint
+
+            if (
+                joint is not None
+                and joint.type in selectable_types
+            ):
+                nearest = (node, joint)
+
+            if node is target_node:
+                result = nearest
+                return True
+
+            for child in node.children:
+                if walk(child, nearest):
+                    return True
+
+            return False
+
+        for root in self.roots:
+            if walk(root):
+                break
+
+        return result
+    
+    def clear_selected_joint(
+        self,
+        refresh=True,
+        notify=True,
+    ):
+        had_selection = (
+            self.selected_joint_node is not None
+        )
+
+        self.selected_joint = None
+        self.selected_joint_node = None
+        self.selected_joint_lock_T = None
+
+        if refresh and had_selection and self.roots:
+            self.refresh_model(False)
+
+        if notify and self.on_model_selected is not None:
+            self.on_model_selected(None)

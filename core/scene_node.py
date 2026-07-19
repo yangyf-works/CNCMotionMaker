@@ -37,3 +37,4 @@ class SceneNode:
         
         self.joint = None
         self.joint_value = 0.0
+        self.joint_base_T = np.eye(4)
