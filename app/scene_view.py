@@ -220,7 +220,7 @@ class SceneView:
                 if self.pick_model(event.x, event.y) is None:
                     self.clear_selected_joint()
 
-                return gui.Widget.EventCallbackResult.HANDLED
+                return gui.Widget.EventCallbackResult.CONSUMED
 
             if (event.is_button_down(gui.MouseButton.MIDDLE) or alt):
                 self.sun_dragging = True
@@ -794,9 +794,7 @@ class SceneView:
             display_T = correction_T @ item["world_T"]
             mesh_world.transform(display_T)
 
-            mesh_bbox = (
-                mesh_world.get_axis_aligned_bounding_box()
-            )
+            mesh_bbox = mesh_world.get_axis_aligned_bounding_box()
 
             if bbox is None:
                 bbox = mesh_bbox

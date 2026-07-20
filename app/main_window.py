@@ -244,6 +244,8 @@ class MainWindow:
 
             if self.current_json_path is not None:
                 extra_scene_view.load_json_model(self.current_json_path)
+                self._copy_joint_values(self.scene_view, extra_scene_view)
+                extra_scene_view.refresh_model(model_reset=True)
 
             extra_window.set_needs_layout()
             extra_scene_view.widget.force_redraw()
@@ -263,6 +265,43 @@ class MainWindow:
         finally:
             self._view_add_remove_btn_update()
 
+    def _copy_joint_values(
+        self,
+        source_view,
+        target_view,
+    ):
+        source_nodes = self._collect_joint_nodes(source_view.roots)
+        target_nodes = self._collect_joint_nodes(target_view.roots)
+
+        if len(source_nodes) != len(target_nodes):
+            print(
+                "Joint count mismatch:",
+                len(source_nodes),
+                len(target_nodes),
+            )
+            return
+
+        for source_node, target_node in zip(
+            source_nodes,
+            target_nodes,
+        ):
+            target_node.joint_value = source_node.joint_value
+
+    def _collect_joint_nodes(self, roots):
+        result = []
+
+        def walk(node):
+            if node.joint is not None:
+                result.append(node)
+
+            for child in node.children:
+                walk(child)
+
+        for root in roots:
+            walk(root)
+
+        return result
+
     def _get_next_view_no(self):
         used_numbers = set(
             self.extra_view_numbers.values()
@@ -279,7 +318,7 @@ class MainWindow:
         if view_no is None:
             return
     
-        title = f"SubView {view_no}"
+        title = f"SubView {self.extra_view_numbers.get(id(extra_window)) - 1}"
 
         extra_window.set_needs_layout()
 
@@ -405,7 +444,7 @@ class MainWindow:
         )
 
     def _create_extra_view(self, view_no):
-        title = f"SubView {view_no}"
+        title = f"SubView {view_no - 1}"
 
         camera_views = {
             2: "front",
