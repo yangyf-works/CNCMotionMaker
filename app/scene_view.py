@@ -1,4 +1,3 @@
-import copy
 import json
 from pathlib import Path
 import numpy as np
@@ -9,10 +8,7 @@ import open3d.visualization.gui as gui # type: ignore
 import open3d.visualization.rendering as rendering # type: ignore
 
 from core.model_builder import build_geometry_list_from_model_json, collect_export_meshes
-from core.chain_utils import (
-    build_chain_points_from_sprockets,
-    get_carrier_positions,
-)
+from core.chain_utils import  build_chain_points_from_sprockets
 from core.model_builder import (
     update_all_world_transforms,
     collect_visible_meshes,
@@ -45,6 +41,9 @@ class SceneView:
         self.model_geometries = []
         self.geometry_names = set()
         self.roots = []
+
+        self.joint_axis_label_infos = []
+        self.axis_geometries = []
 
         self.window.set_on_key(self._on_key)
         self.on_mouse_down = on_mouse_down
@@ -102,11 +101,6 @@ class SceneView:
         self.fit_camera_to_model(axis)
         self.save_initial_camera_state()
 
-    def clear_scene(self):
-        self.geometry_names.clear()
-        self.model_geometries.clear()
-        self.widget.scene.clear_geometry()
-
     def load_json_model(self, json_path: Path):
         try:
             self.clear_selected_joint(
@@ -120,11 +114,165 @@ class SceneView:
             self._build_model_from_json(data, json_path)
             self.refresh_model()
 
+            self.rebuild_joint_axes()
+            self.show_axis = False
+            self.set_joint_axes_visible(False)
+
             self.fit_camera_to_model()
             self.save_initial_camera_state()
 
         except Exception:
             traceback.print_exc()
+
+    def rebuild_joint_axes(self):
+        self.clear_joint_axes()
+
+        update_all_world_transforms(self.roots)
+        scene_bbox = self.get_scene_bbox()
+
+        for node in self.iter_joint_nodes():
+            joint = node.joint
+            origin, direction = self.get_joint_axis_info(node, joint)
+
+            if origin is None or direction is None:
+                continue
+
+            bbox = self.get_node_bbox(node)
+            if bbox is None:
+                continue
+
+            color = self.get_joint_axis_color(joint)
+            label_text = joint.name if joint.name else node.name
+
+            match joint.type:
+                case "rotate":
+                    self.create_axis_line(
+                        name=f"joint_axis_{node.name}",
+                        axis_type=joint.type,
+                        origin=origin,
+                        direction=direction,
+                        bbox=scene_bbox,
+                        color=color,
+                        type="plusinfinite",
+                        label=label_text,
+                        node=node,
+                    )
+
+                case "linear":
+                    self.create_axis_line(
+                        name=f"joint_axis_{node.name}_minus",
+                        axis_type=joint.type,
+                        origin=origin,
+                        direction=direction,
+                        bbox=bbox,
+                        color=color,
+                        type="minusonly",
+                        label=f"-{label_text}",
+                        node=node,
+                    )
+
+                    self.create_axis_line(
+                        name=f"joint_axis_{node.name}_plus",
+                        axis_type=joint.type,
+                        origin=origin,
+                        direction=direction,
+                        bbox=bbox,
+                        color=[1.0 - c for c in color],
+                        type="plusonly",
+                        label=f"+{label_text}",
+                        node=node,
+                    )
+
+                case "chain":
+                    self.draw_chain_axis(
+                        node,
+                        color,
+                        label=label_text,
+                    )
+
+                case "signal":
+                    continue
+
+    def update_joint_axis_transforms(self):
+        scene = self.widget.scene
+
+        for info in self.axis_geometries:
+            name = info["name"]
+            node = info["node"]
+            initial_display_T = info["initial_display_T"]
+
+            if not scene.has_geometry(name):
+                continue
+
+            current_display_T = self.get_joint_axis_display_T(node)
+
+            try:
+                delta_T = current_display_T @ np.linalg.inv(initial_display_T)
+            except np.linalg.LinAlgError:
+                delta_T = np.eye(4)
+
+            scene.set_geometry_transform(name, delta_T, )
+
+    def set_joint_axes_visible(self, visible):
+        scene = self.widget.scene
+
+        for name in self.axis_geometry_names:
+            if scene.has_geometry(name):
+                scene.show_geometry(
+                    name,
+                    visible,
+                )
+
+        if visible:
+            self.create_joint_axis_labels()
+        else:
+            self.clear_joint_axis_labels()
+
+        self.widget.force_redraw()
+
+    def clear_joint_axis_labels(self):
+        for label in self.joint_axis_labels:
+            self.widget.remove_3d_label(label)
+
+        self.joint_axis_labels.clear()
+
+    def create_joint_axis_labels(self):
+        self.clear_joint_axis_labels()
+
+        for info in self.joint_axis_label_infos:
+            position = info["position"].copy()
+            node = info.get("node")
+
+            if node is not None:
+                current_display_T = self.get_joint_axis_display_T(node)
+                initial_display_T = info["initial_display_T"]
+
+                try:
+                    delta_T = (
+                        current_display_T
+                        @ np.linalg.inv(initial_display_T)
+                    )
+
+                    position_h = np.append(position, 1.0)
+                    position = (delta_T @ position_h)[:3]
+
+                except np.linalg.LinAlgError:
+                    pass
+
+            label = self.widget.add_3d_label(
+                position,
+                info["text"],
+            )
+
+            color = info["color"]
+            label.color = gui.Color(
+                color[0],
+                color[1],
+                color[2],
+                1.0,
+            )
+
+            self.joint_axis_labels.append(label)
 
     def _build_model_from_json(self, data, json_path):
         roots, geometry_list = build_geometry_list_from_model_json(
@@ -353,8 +501,7 @@ class SceneView:
         correction_T = self.get_display_correction_T()
 
         if model_reset:
-            self.clear_scene()
-            self.model_geometries = []
+            self.clear_model_geometries()
 
             geometry_list = collect_visible_meshes(self.roots)
             for i, item in enumerate(geometry_list):
@@ -404,10 +551,32 @@ class SceneView:
 
                 self.widget.scene.set_geometry_transform(name, display_T)
 
+        self.update_joint_axis_transforms()
+
         if self.show_axis:
-            self.show_joint_axes()
-        else:
-            self.clear_joint_axes()
+            self.create_joint_axis_labels()
+
+        self.widget.force_redraw()
+
+    def clear_model_geometries(self):
+        if self.widget.scene.has_geometry("axis"):
+            self.widget.scene.remove_geometry("axis")
+            
+        for item in self.model_geometries:
+            name = item["name"]
+
+            if self.widget.scene.has_geometry(name):
+                self.widget.scene.remove_geometry(name)
+
+            self.geometry_names.discard(name)
+
+        self.model_geometries.clear()
+
+    def get_joint_axis_display_T(self, node):
+        return (
+            self.get_display_correction_T()
+            @ node.world_T
+        )
 
     def save_initial_camera_state(self):
         camera = self.widget.scene.camera
@@ -778,11 +947,7 @@ class SceneView:
     
     def switch_show_joint_axes(self):
         self.show_axis = not self.show_axis
-
-        if self.show_axis:
-            self.show_joint_axes()
-        else:
-            self.clear_joint_axes()
+        self.set_joint_axes_visible(self.show_axis)
 
     def get_node_bbox(self, node):
         correction_T = self.get_display_correction_T()
@@ -802,81 +967,19 @@ class SceneView:
                 bbox += mesh_bbox
 
         return bbox
-
-    def show_joint_axes(self):
-        self.clear_joint_axes()
-        scene_bbox = self.get_scene_bbox()
-
-        for node in self.iter_joint_nodes():
-            joint = node.joint
-            origin, direction = self.get_joint_axis_info(node, joint)
-
-            if origin is None or direction is None:
-                continue
-
-            bbox = self.get_node_bbox(node)
-            if bbox is None:
-                continue
-
-            color = self.get_joint_axis_color(joint)
-            label_text = joint.name if joint.name else node.name
-
-            match joint.type:
-                case "rotate":
-                    bbox = scene_bbox
-                    self.create_axis_line(
-                        name=f"joint_axis_{node.name}",
-                        axistype=joint.type,
-                        origin=origin,
-                        direction=direction,
-                        bbox=bbox,
-                        color=color,
-                        type="plusinfinite",
-                        label=label_text,
-                    )
-
-                case "linear":
-                    self.create_axis_line(
-                        name=f"joint_axis_{node.name}_minus",
-                        axistype=joint.type,
-                        origin=origin,
-                        direction=direction,
-                        bbox=bbox,
-                        color=color,
-                        type="minusonly",
-                        label=f"-{label_text}",
-                    )
-
-                    self.create_axis_line(
-                        name=f"joint_axis_{node.name}_plus",
-                        axistype=joint.type,
-                        origin=origin,
-                        direction=direction,
-                        bbox=bbox,
-                        color=[1.0 - c for c in color],
-                        type="plusonly",
-                        label=f"+{label_text}",
-                    )
-
-                case "chain":
-                    self.draw_chain_axis(node, color, label=label_text,)
-
-                case "signal":
-                    continue
                 
     def clear_joint_axes(self):
-        if not hasattr(self, "axis_geometry_names"):
-            self.axis_geometry_names = []
+        scene = self.widget.scene
 
         for name in self.axis_geometry_names:
-            if self.widget.scene.scene.has_geometry(name):
-                self.widget.scene.scene.remove_geometry(name)
+            if scene.has_geometry(name):
+                scene.remove_geometry(name)
 
         self.axis_geometry_names.clear()
+        self.axis_geometries.clear()
 
-        for label  in self.joint_axis_labels:
-            self.widget.remove_3d_label(label )
-        self.joint_axis_labels.clear()
+        self.clear_joint_axis_labels()
+        self.joint_axis_label_infos.clear()
 
     def get_joint_axis_info(self, node, joint):
         axis = getattr(joint, "axis", None)
@@ -897,9 +1000,7 @@ class SceneView:
 
         local_axis /= norm
 
-        base_T = getattr(node, "joint_base_T", node.world_T,)
-
-        display_T = self.get_display_correction_T() @ base_T
+        display_T = self.get_joint_axis_display_T(node)
         direction = display_T[:3, :3] @ local_axis
         direction_norm = np.linalg.norm(direction)
         if direction_norm < 1e-9:
@@ -925,9 +1026,25 @@ class SceneView:
 
         return (0.8, 0.8, 0.8)       # その他
     
-    def create_axis_line(self, axistype, origin, direction, bbox, color=(1, 0, 0), type="infinite", name=None, label=None,):
+    def create_axis_line(
+            self, 
+            axis_type, 
+            origin, 
+            direction, 
+            bbox, 
+            color=(1, 0, 0), 
+            type="infinite", 
+            name=None, 
+            label=None,
+            node=None,
+        ):
         origin = np.asarray(origin, dtype=float)
         direction = np.asarray(direction, dtype=float)
+        direction_norm = np.linalg.norm(direction)
+        if direction_norm <= 1e-9:
+            return None
+
+        direction /= direction_norm
 
         min_bound = bbox.min_bound
         max_bound = bbox.max_bound
@@ -959,6 +1076,8 @@ class SceneView:
 
         scene_size = np.linalg.norm(bbox.get_extent())
         outside_length = max(scene_size * 0.2, 1.0)
+        label_offset = max(scene_size * 0.02, 0.2)
+        label_position = np.asarray([0,0,0], dtype=float)
 
         negative_surface = points[0][1]
         positive_surface = points[-1][1]
@@ -966,18 +1085,22 @@ class SceneView:
         if type == "plusinfinite":
             p1 = origin
             p2 = positive_surface
+            label_position = p2 + direction * label_offset
 
         elif type == "plusonly":
             p1 = positive_surface
             p2 = positive_surface + direction * outside_length
+            label_position = p2 + direction * label_offset
 
         elif type == "minusonly":
             p1 = negative_surface
             p2 = negative_surface - direction * outside_length
+            label_position = p2 - direction * label_offset
         
         else:
             p1 = negative_surface
             p2 = positive_surface
+            label_position = p2
 
         if (
             not np.all(np.isfinite(p1))
@@ -987,18 +1110,29 @@ class SceneView:
             return None
 
         if label is not None:
-            label_pos = p2
-            label = self.widget.add_3d_label(label_pos, label)
-            label.color = gui.Color(color[0], color[1], color[2], 1.0)
-
-            self.joint_axis_labels.append(label)
+            self.joint_axis_label_infos.append(
+                {
+                    "position": np.asarray(
+                        label_position,
+                        dtype=float,
+                    ).copy(),
+                    "text": label,
+                    "color": tuple(color),
+                    "node": node,
+                    "initial_display_T": (
+                        self.get_joint_axis_display_T(node).copy()
+                        if node is not None
+                        else np.eye(4)
+                    ),
+                }
+            )
 
         line = o3d.geometry.LineSet()
         line.points = o3d.utility.Vector3dVector([p1, p2])
         line.lines = o3d.utility.Vector2iVector([[0, 1]])
         line.colors = o3d.utility.Vector3dVector([color])
         
-        self.widget.scene.scene.add_geometry(
+        self.widget.scene.add_geometry(
             name,
             line,
             self.axis_material,
@@ -1006,19 +1140,31 @@ class SceneView:
 
         self.axis_geometry_names.append(name)
 
-        if axistype == "rotate":
+        if node is not None:
+            self.axis_geometries.append(
+                {
+                    "name": name,
+                    "node": node,
+                    "initial_display_T": (
+                        self.get_joint_axis_display_T(node).copy()
+                    ),
+                }
+            )
+
+        if axis_type == "rotate":
             scene_size = np.linalg.norm(bbox.get_extent())
             arc_radius = scene_size * 0.04
 
             self.create_rotation_direction_arc(
-                name=f"joint_axis_{name}_rot_dir",
+                name=f"{name}_rot_dir",
                 center=p2,
                 axis_dir=direction,
                 radius=arc_radius,
                 color=color,
+                node=node,
             )
 
-    def create_rotation_direction_arc(self, name, center, axis_dir, radius, color=(1, 0, 0), angle_deg=270, segments=48,):
+    def create_rotation_direction_arc(self, name, center, axis_dir, radius, color=(1, 0, 0), angle_deg=90, segments=12, node=None,):
         center = np.asarray(center, dtype=float)
         axis_dir = np.asarray(axis_dir, dtype=float)
 
@@ -1075,13 +1221,23 @@ class SceneView:
         line_set.lines = o3d.utility.Vector2iVector(lines)
         line_set.colors = o3d.utility.Vector3dVector([color for _ in lines])
 
-        self.widget.scene.scene.add_geometry(
+        self.widget.scene.add_geometry(
             name,
             line_set,
             self.axis_material,
         )
 
         self.axis_geometry_names.append(name)
+        if node is not None:
+            self.axis_geometries.append(
+                {
+                    "name": name,
+                    "node": node,
+                    "initial_display_T": (
+                        self.get_joint_axis_display_T(node).copy()
+                    ),
+                }
+            )
         
     def get_scene_bbox(self):
         correction_T = self.get_display_correction_T()
@@ -1108,18 +1264,6 @@ class SceneView:
             )
 
         return bbox
-
-    def _collect_bboxes(self, node, bboxes):
-        for mesh in node.meshes:
-            mesh_world = copy.deepcopy(mesh)
-            mesh_world.transform(node.world_T)
-
-            bboxes.append(
-                mesh_world.get_axis_aligned_bounding_box()
-            )
-
-        for child in node.children:
-            self._collect_bboxes(child, bboxes)
             
     def create_chain_axis_lineset(self, points, loop=True, color=(1.0, 0.6, 0.0)):
         if points is None or len(points) < 2:
@@ -1171,65 +1315,43 @@ class SceneView:
         line_set.transform(display_T)
 
         geom_name = f"axis_chain_{joint.name or node.name}"
+        if self.widget.scene.has_geometry(geom_name):
+            self.widget.scene.remove_geometry(geom_name)
 
-        self.widget.scene.scene.remove_geometry(geom_name)
-        self.widget.scene.scene.add_geometry(
+        self.widget.scene.add_geometry(
             geom_name,
             line_set,
             self.axis_material,
         )
+        
         self.axis_geometry_names.append(geom_name)
+        self.axis_geometries.append(
+            {
+                "name": geom_name,
+                "node": node,
+                "initial_display_T": (
+                    self.get_joint_axis_display_T(node).copy()
+                ),
+            }
+        )
 
         label_text = label or joint.name or node.name
 
         world_points = np.asarray(line_set.points)
+
         if len(world_points) > 0:
-            label_pos = world_points.mean(axis=0)
-
-            axis_label = self.widget.add_3d_label(
-                label_pos,
-                label_text
+            self.joint_axis_label_infos.append(
+                {
+                    "position": world_points.mean(axis=0).copy(),
+                    "text": label_text,
+                    "color": tuple(color),
+                    "node": node,
+                    "initial_display_T": (
+                        self.get_joint_axis_display_T(node).copy()
+                    ),
+                }
             )
-            axis_label.color = gui.Color(
-                color[0],
-                color[1],
-                color[2],
-                1.0
-            )
-
-            self.joint_axis_labels.append(axis_label)
     
-    def show_chain_carriers(self, node):
-        joint = node.joint
-
-        if not joint.carriers:
-            return
-
-        positions = get_carrier_positions(
-            joint.sprockets,
-            joint.carriers,
-            chain_offset=node.joint_value,
-            loop=joint.loop,
-        )
-
-        for i, pos in enumerate(positions):
-
-            sphere = o3d.geometry.TriangleMesh.create_sphere(
-                radius=0.5
-            )
-
-            sphere.translate(pos)
-
-            name = f"carrier_{node.name}_{i}"
-
-            self.widget.scene.scene.add_geometry(
-                name,
-                sphere,
-                self.material,
-            )
-
-            self.axis_geometry_names.append(name)
-
     def set_joint_value_by_name(self, axis_name, value):
         for node in self.iter_joint_nodes():
             joint = node.joint
