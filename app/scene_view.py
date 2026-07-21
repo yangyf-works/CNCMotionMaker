@@ -115,8 +115,7 @@ class SceneView:
             self.refresh_model()
 
             self.rebuild_joint_axes()
-            self.show_axis = False
-            self.set_joint_axes_visible(False)
+            self.set_joint_axes_visible(self.show_axis)
 
             self.fit_camera_to_model()
             self.save_initial_camera_state()
@@ -1040,6 +1039,7 @@ class SceneView:
         ):
         origin = np.asarray(origin, dtype=float)
         direction = np.asarray(direction, dtype=float)
+
         direction_norm = np.linalg.norm(direction)
         if direction_norm <= 1e-9:
             return None
@@ -1049,43 +1049,59 @@ class SceneView:
         min_bound = bbox.min_bound
         max_bound = bbox.max_bound
 
-        t_values = []
+        def get_intersection_points(line_origin):
+            t_values = []
 
-        for i in range(3):
-            if abs(direction[i]) < 1e-9:
-                continue
+            for i in range(3):
+                if abs(direction[i]) < 1e-9:
+                    continue
 
-            t1 = (min_bound[i] - origin[i]) / direction[i]
-            t2 = (max_bound[i] - origin[i]) / direction[i]
-            t_values.extend([t1, t2])
+                t1 = (min_bound[i] - line_origin[i]) / direction[i]
+                t2 = (max_bound[i] - line_origin[i]) / direction[i]
+                t_values.extend([t1, t2])
 
-        points = []
+            intersection_points = []
 
-        for t in t_values:
-            p = origin + direction * t
+            for t in t_values:
+                point = line_origin + direction * t
 
-            if np.all(p >= min_bound - 1e-6) and np.all(
-                p <= max_bound + 1e-6
-            ):
-                points.append((t, p))
+                if np.all(point >= min_bound - 1e-6) and np.all(
+                    point <= max_bound + 1e-6
+                ):
+                    intersection_points.append((t, point))
+
+            return intersection_points
+        
+        points = get_intersection_points(origin)
+
+        if len(points) < 2:
+            origin = bbox.get_center()
+            points = get_intersection_points(origin)
 
         if len(points) < 2:
             return None
 
-        points.sort(key=lambda x: x[0])
+        points.sort(key=lambda item: item[0])
+
+        negative_surface = points[0][1]
+        positive_surface = points[-1][1]
 
         scene_size = np.linalg.norm(bbox.get_extent())
         outside_length = max(scene_size * 0.2, 1.0)
         label_offset = max(scene_size * 0.02, 0.2)
         label_position = np.asarray([0,0,0], dtype=float)
 
-        negative_surface = points[0][1]
-        positive_surface = points[-1][1]
-
         if type == "plusinfinite":
             p1 = origin
-            p2 = positive_surface
-            label_position = p2 + direction * label_offset
+
+            if positive_surface[1] >= negative_surface[1]:
+                p2 = positive_surface
+                label_direction = direction
+            else:
+                p2 = negative_surface
+                label_direction = -direction
+
+            label_position = p2 + label_direction * label_offset
 
         elif type == "plusonly":
             p1 = positive_surface
@@ -1156,7 +1172,15 @@ class SceneView:
             arc_radius = scene_size * 0.04
 
             self.create_rotation_direction_arc(
-                name=f"{name}_rot_dir",
+                name=f"{name}_rot_dir1",
+                center=p1,
+                axis_dir=direction,
+                radius=arc_radius,
+                color=color,
+                node=node,
+            )
+            self.create_rotation_direction_arc(
+                name=f"{name}_rot_dir2",
                 center=p2,
                 axis_dir=direction,
                 radius=arc_radius,
