@@ -8,8 +8,9 @@ An open-source CNC machine motion visualization and Digital Twin platform built 
 ![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey)
 
 <p align="center">
-  <img src="docs/images/main.png" alt="CNCMotionMaker Main Window" width="900">
+  <img src="docs/images/main.png" alt="CNCMotionMaker Main Window" width="700">
 </p>
+Visualize CNC machine motion, execute NC programs, and develop Digital Twin applications with a JSON-based machine definition.
 
 ## Overview
 
@@ -21,15 +22,24 @@ The project focuses on machine visualization, Digital Twin development, and futu
 
 ## Features
 
+### Machine Definition
 - JSON-based machine definition
 - Hierarchical machine structure
 - Linear / Rotary / Signal / Chain joints
+
+### Motion Visualization
 - Multi-window Open3D viewer
-- NC Program playback
 - Joint axis visualization
 - Camera tracking
+
+### NC Programming
+- NC program playback using a custom NC DSL
+
+### Digital Twin
+- Connect to CNC devices (requires the FANUC FOCAS library)
+
+### Export
 - STL export
-- Digital Twin interface
 
 ## Installation
 
