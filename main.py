@@ -1,12 +1,13 @@
 import sys
 from pathlib import Path
-from PySide6.QtWidgets import QApplication, QInputDialog
+
+import open3d.visualization.gui as gui  # type: ignore
 from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import QApplication, QInputDialog
 
 from app.main_window import MainWindow
-import open3d.visualization.gui as gui  # type: ignore
+from app.qt_style import TitleBar, apply_common_dark_theme
 
-from app.qt_style import apply_common_dark_theme, TitleBar
 
 def get_app_root() -> Path:
     if getattr(sys, "frozen", False):

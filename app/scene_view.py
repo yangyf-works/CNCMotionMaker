@@ -1,21 +1,22 @@
 import json
-from pathlib import Path
-import numpy as np
 import math
+import time
+import traceback
+from pathlib import Path
 
+import numpy as np
 import open3d as o3d
-import open3d.visualization.gui as gui # type: ignore
-import open3d.visualization.rendering as rendering # type: ignore
+import open3d.visualization.rendering as rendering  # type: ignore
+from open3d.visualization import gui  # type: ignore
 
-from core.model_builder import build_geometry_list_from_model_json, collect_export_meshes
-from core.chain_utils import  build_chain_points_from_sprockets
+from core.chain_utils import build_chain_points_from_sprockets
 from core.model_builder import (
-    update_all_world_transforms,
+    build_geometry_list_from_model_json,
+    collect_export_meshes,
     collect_visible_meshes,
+    update_all_world_transforms,
 )
 
-import traceback
-import time
 
 class SceneView:
     def __init__(
@@ -35,6 +36,7 @@ class SceneView:
         self.material = rendering.MaterialRecord()
         self.material.shader = "defaultLit"
         
+        self.widget.scene.view.set_shadowing(False)
         self.widget.scene.set_background([0, 0, 0, 1])
         self.widget.scene.scene.enable_sun_light(True)
 
@@ -76,6 +78,11 @@ class SceneView:
         self.selected_joint = None
         self.selected_joint_node = None
         self.selected_joint_lock_T = None
+
+        self.rotation_axis_length_ratio = 0.1
+        self.rotation_axis_min_length = 1.0
+        self.rotation_axis_probe_min = 1e-4
+        self.rotation_arc_radius_ratio = 0.04
 
         self._last_click_time = 0.0
         self._last_click_pos = None
@@ -122,75 +129,6 @@ class SceneView:
 
         except Exception:
             traceback.print_exc()
-
-    def rebuild_joint_axes(self):
-        self.clear_joint_axes()
-
-        update_all_world_transforms(self.roots)
-        scene_bbox = self.get_scene_bbox()
-
-        for node in self.iter_joint_nodes():
-            joint = node.joint
-            origin, direction = self.get_joint_axis_info(node, joint)
-
-            if origin is None or direction is None:
-                continue
-
-            bbox = self.get_node_bbox(node)
-            if bbox is None:
-                continue
-
-            color = self.get_joint_axis_color(joint)
-            label_text = joint.name if joint.name else node.name
-
-            match joint.type:
-                case "rotate":
-                    self.create_axis_line(
-                        name=f"joint_axis_{node.name}",
-                        axis_type=joint.type,
-                        origin=origin,
-                        direction=direction,
-                        bbox=scene_bbox,
-                        color=color,
-                        type="plusinfinite",
-                        label=label_text,
-                        node=node,
-                    )
-
-                case "linear":
-                    self.create_axis_line(
-                        name=f"joint_axis_{node.name}_minus",
-                        axis_type=joint.type,
-                        origin=origin,
-                        direction=direction,
-                        bbox=bbox,
-                        color=color,
-                        type="minusonly",
-                        label=f"-{label_text}",
-                        node=node,
-                    )
-
-                    self.create_axis_line(
-                        name=f"joint_axis_{node.name}_plus",
-                        axis_type=joint.type,
-                        origin=origin,
-                        direction=direction,
-                        bbox=bbox,
-                        color=[1.0 - c for c in color],
-                        type="plusonly",
-                        label=f"+{label_text}",
-                        node=node,
-                    )
-
-                case "chain":
-                    self.draw_chain_axis(
-                        node,
-                        color,
-                        label=label_text,
-                    )
-
-                case "signal":
-                    continue
 
     def update_joint_axis_transforms(self):
         scene = self.widget.scene
@@ -1597,3 +1535,353 @@ class SceneView:
 
         if notify and self.on_model_selected is not None:
             self.on_model_selected(None)
+    
+    def build_axis_raycast_context(self):
+        combined_scene = o3d.t.geometry.RaycastingScene()
+        mesh_scenes = []
+
+        correction_T = self.get_display_correction_T()
+
+        for item in collect_visible_meshes(self.roots):
+            mesh_world = o3d.geometry.TriangleMesh(item["mesh"])
+
+            display_T = correction_T @ item["world_T"]
+            mesh_world.transform(display_T)
+
+            if len(mesh_world.vertices) == 0:
+                continue
+
+            if len(mesh_world.triangles) == 0:
+                continue
+
+            tensor_mesh = o3d.t.geometry.TriangleMesh.from_legacy(
+                mesh_world
+            )
+
+            combined_scene.add_triangles(tensor_mesh)
+
+            mesh_scene = o3d.t.geometry.RaycastingScene()
+            mesh_scene.add_triangles(tensor_mesh)
+            mesh_scenes.append(mesh_scene)
+
+        scene_bbox = self.get_scene_bbox()
+        scene_size = float(np.linalg.norm(scene_bbox.get_extent()))
+
+        return {
+            "combined_scene": combined_scene,
+            "mesh_scenes": mesh_scenes,
+            "scene_size": max(scene_size, 1.0),
+        }
+    
+    def is_point_inside_any_mesh(
+        self,
+        point,
+        mesh_scenes,
+    ):
+        point = np.asarray(point, dtype=np.float32)
+
+        query = o3d.core.Tensor(
+            point.reshape(1, 3),
+            dtype=o3d.core.Dtype.Float32,
+        )
+
+        for scene in mesh_scenes:
+            occupancy = scene.compute_occupancy(query)
+
+            if float(occupancy[0].item()) > 0.5:
+                return True
+
+        return False
+
+    def find_first_outside_intersection(
+        self,
+        origin,
+        direction,
+        raycast_context,
+    ):
+        origin = np.asarray(origin, dtype=np.float64)
+        direction = np.asarray(direction, dtype=np.float64)
+
+        direction_norm = np.linalg.norm(direction)
+        if direction_norm <= 1e-9:
+            return None
+
+        direction /= direction_norm
+
+        combined_scene = raycast_context["combined_scene"]
+        mesh_scenes = raycast_context["mesh_scenes"]
+        scene_size = raycast_context["scene_size"]
+
+        if not mesh_scenes:
+            return None
+
+        ray = o3d.core.Tensor(
+            [[
+                origin[0],
+                origin[1],
+                origin[2],
+                direction[0],
+                direction[1],
+                direction[2],
+            ]],
+            dtype=o3d.core.Dtype.Float32,
+        )
+
+        intersections = combined_scene.list_intersections(ray)
+
+        if "t_hit" not in intersections:
+            return None
+
+        t_hits = np.asarray(
+            intersections["t_hit"].numpy(),
+            dtype=np.float64,
+        ).reshape(-1)
+
+        t_hits = t_hits[
+            np.isfinite(t_hits)
+            & (t_hits > 1e-6)
+        ]
+
+        if len(t_hits) == 0:
+            return None
+
+        t_hits.sort()
+
+        merge_epsilon = max(scene_size * 1e-7, 1e-5)
+        unique_t_hits = []
+
+        for t in t_hits:
+            if (
+                not unique_t_hits
+                or abs(t - unique_t_hits[-1]) > merge_epsilon
+            ):
+                unique_t_hits.append(float(t))
+
+        for i, t_hit in enumerate(unique_t_hits):
+            if i + 1 < len(unique_t_hits):
+                next_t = unique_t_hits[i + 1]
+            else:
+                next_t = t_hit + scene_size
+
+            segment_length = next_t - t_hit
+
+            if segment_length <= merge_epsilon:
+                continue
+
+            # セグメントの中心点
+            segment_center_t = (t_hit + next_t) * 0.5
+            segment_center = (
+                origin
+                + direction * segment_center_t
+            )
+
+            inside = self.is_point_inside_any_mesh(
+                segment_center,
+                mesh_scenes,
+            )
+
+            # この交点の後ろにあるセグメントが外部
+            if not inside:
+                hit_point = origin + direction * t_hit
+                return hit_point
+
+        return None
+
+    def rebuild_joint_axes(self):
+        self.clear_joint_axes()
+
+        update_all_world_transforms(self.roots)
+
+        scene_bbox = self.get_scene_bbox()
+        raycast_context = self.build_axis_raycast_context()
+
+        for node in self.iter_joint_nodes():
+            joint = node.joint
+            origin, direction = self.get_joint_axis_info(node, joint)
+
+            if origin is None or direction is None:
+                continue
+
+            color = self.get_joint_axis_color(joint)
+            label_text = joint.name if joint.name else node.name
+
+            match joint.type:
+                case "rotate":
+                    reverse_arrow = False
+                    draw_direction = direction.copy()
+
+                    if np.dot(draw_direction, [0.0, 1.0, 0.0]) < 0:
+                        draw_direction = -draw_direction
+                        reverse_arrow = True
+
+                    axis_start = self.find_first_outside_intersection(
+                        origin=origin,
+                        direction=draw_direction,
+                        raycast_context=raycast_context,
+                    )
+
+                    self.create_rotation_axis_line(
+                        name=f"joint_axis_{node.name}",
+                        origin=origin,
+                        direction=draw_direction,
+                        start=axis_start,
+                        bbox=scene_bbox,
+                        color=color,
+                        label=label_text,
+                        node=node,
+                        reverse_arrow=reverse_arrow,
+                    )
+
+                case "linear":
+                    bbox = self.get_node_bbox(node)
+                    if bbox is None:
+                        continue
+
+                    self.create_axis_line(
+                        name=f"joint_axis_{node.name}_minus",
+                        axis_type=joint.type,
+                        origin=origin,
+                        direction=direction,
+                        bbox=bbox,
+                        color=color,
+                        type="minusonly",
+                        label=f"-{label_text}",
+                        node=node,
+                    )
+
+                    self.create_axis_line(
+                        name=f"joint_axis_{node.name}_plus",
+                        axis_type=joint.type,
+                        origin=origin,
+                        direction=direction,
+                        bbox=bbox,
+                        color=[1.0 - c for c in color],
+                        type="plusonly",
+                        label=f"+{label_text}",
+                        node=node,
+                    )
+
+                case "chain":
+                    self.draw_chain_axis(
+                        node,
+                        color,
+                        label=label_text,
+                    )
+
+                case "signal":
+                    continue
+
+    def create_rotation_axis_line(
+        self,
+        name,
+        origin,
+        direction,
+        start,
+        bbox,
+        color=(1.0, 0.5, 0.0),
+        label=None,
+        node=None,
+        reverse_arrow=False,
+    ):
+        origin = np.asarray(origin, dtype=float)
+        direction = np.asarray(direction, dtype=float)
+
+        direction_norm = np.linalg.norm(direction)
+        if direction_norm <= 1e-9:
+            return None
+
+        direction /= direction_norm
+
+        scene_size = float(np.linalg.norm(bbox.get_extent()))
+        scene_size = max(scene_size, 1.0)
+
+        # 固定長。必要ならクラス変数にする
+        axis_length = max(
+            scene_size * self.rotation_axis_length_ratio,
+            self.rotation_axis_min_length,
+        )
+
+        # レイで有効な出口が見つからなかった場合のフォールバック
+        if start is None:
+            start = origin.copy()
+        else:
+            start = np.asarray(start, dtype=float)
+
+        end = start + direction * axis_length
+
+        if (
+            not np.all(np.isfinite(start))
+            or not np.all(np.isfinite(end))
+            or np.linalg.norm(end - start) <= 1e-6
+        ):
+            return None
+
+        line = o3d.geometry.LineSet()
+        line.points = o3d.utility.Vector3dVector(
+            [start, end]
+        )
+        line.lines = o3d.utility.Vector2iVector(
+            [[0, 1]]
+        )
+        line.colors = o3d.utility.Vector3dVector(
+            [color]
+        )
+
+        self.widget.scene.add_geometry(
+            name,
+            line,
+            self.axis_material,
+        )
+
+        self.axis_geometry_names.append(name)
+
+        initial_display_T = (
+            self.get_joint_axis_display_T(node).copy()
+            if node is not None
+            else np.eye(4)
+        )
+
+        if node is not None:
+            self.axis_geometries.append(
+                {
+                    "name": name,
+                    "node": node,
+                    "initial_display_T": initial_display_T,
+                }
+            )
+
+        # ラベルは終点の少し先
+        label_offset = max(scene_size * 0.02, 0.2)
+        label_position = end + direction * label_offset
+
+        if label is not None:
+            self.joint_axis_label_infos.append(
+                {
+                    "position": label_position.copy(),
+                    "text": label,
+                    "color": tuple(color),
+                    "node": node,
+                    "initial_display_T": initial_display_T,
+                }
+            )
+
+        # 回転方向表示は現在の処理をそのまま使用
+        arc_radius = max(
+            scene_size * self.rotation_arc_radius_ratio,
+            1.0,
+        )
+        arrow_direction = -direction if reverse_arrow else direction
+
+        self.create_rotation_direction_arc(
+            name=f"{name}_rot_dir",
+            center=end,
+            axis_dir=arrow_direction,
+            radius=arc_radius,
+            color=color,
+            node=node,
+        )
+
+        return {
+            "start": start,
+            "end": end,
+        }

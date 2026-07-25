@@ -40,6 +40,7 @@ class ControlPanel:
         self.widget.add_child(self.json_combo)
 
         self.load_button = gui.Button("Load Model")
+        self.load_button.background_color = gui.Color(0.2, 0.5, 0.9)  # 青
         self.load_button.horizontal_padding_em = 0.2
         self.load_button.vertical_padding_em = 0.1
         self.load_button.set_on_clicked(self._on_load_clicked)

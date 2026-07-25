@@ -1,29 +1,38 @@
 from __future__ import annotations
+
 import math
-from PySide6.QtCore import Qt, QRect, QSize, QTimer, QEvent
+import re
+from enum import Enum, auto
+
+from PySide6.QtCore import QEvent, QRect, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QPainter, QTextFormat
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
+    QFormLayout,
+    QGridLayout,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QPlainTextEdit,
     QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
-    QTabWidget,
-    QTableWidget,
-    QTableWidgetItem,
-    QHeaderView,
-    QFormLayout,
-    QLineEdit,
-    QGridLayout
 )
-from app.qt_style import apply_common_dark_theme, TitleBar
-import re
 
+from app.qt_style import TitleBar, apply_common_dark_theme
+
+class ProgramState(Enum):
+    STOPPED = auto()
+    RUNNING = auto()
+    PAUSED = auto()
+    
 class LineNumberArea(QWidget):
     def __init__(self, editor):
         super().__init__(editor)
@@ -36,6 +45,23 @@ class LineNumberArea(QWidget):
     def paintEvent(self, event):
         self.editor.line_number_area_paint_event(event)
 
+
+class ProgramParseError(ValueError):
+    def __init__(
+        self,
+        line_index: int,
+        message: str,
+    ):
+        super().__init__(message)
+
+        self.line_index = line_index
+        self.message = message
+
+    def __str__(self):
+        return (
+            f"Line {self.line_index + 1}: "
+            f"{self.message}"
+        )
 
 class ProgramEditor(QPlainTextEdit):
     def __init__(self):
@@ -188,8 +214,65 @@ class ProgramEditor(QPlainTextEdit):
                 self.centerCursor()
 
         self.setExtraSelections(selections)
+    
+    def highlight_error_line(self, line_index):
+        block = self.document().findBlockByNumber(
+            line_index
+        )
+
+        if not block.isValid():
+            return
+
+        cursor = self.textCursor()
+        cursor.setPosition(block.position())
+        cursor.clearSelection()
+
+        self.setTextCursor(cursor)
+        self.centerCursor()
+
+        selection = QTextEdit.ExtraSelection()
+
+        selection.format.setBackground(
+            QColor(150, 45, 45)
+        )
+        selection.format.setProperty(
+            QTextFormat.FullWidthSelection,
+            True,
+        )
+
+        selection.cursor = cursor
+
+        self.setExtraSelections([selection])
+
+    def clear_line_highlight(self):
+        self.setExtraSelections([])
+        self.highlight_current_line()
+
+    def replace_program_text(self, text: str):
+        cursor = self.textCursor()
+        old_position = cursor.position()
+
+        self.blockSignals(True)
+
+        try:
+            self.setPlainText(text)
+        finally:
+            self.blockSignals(False)
+
+        cursor = self.textCursor()
+        cursor.setPosition(
+            min(
+                old_position,
+                len(text),
+            )
+        )
+
+        self.setTextCursor(cursor)
+        self.highlight_current_line()
 
 class MachinePanelQt(QMainWindow):
+    NUMBER_PATTERN = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)"
+    
     def __init__(self, on_position_sample=None):
         super().__init__()
         self.on_position_sample = on_position_sample
@@ -210,6 +293,8 @@ class MachinePanelQt(QMainWindow):
         self.machine_timer.timeout.connect(self.poll_machine)
 
         self._drag_start_pos = None
+        
+        self.program_state = ProgramState.STOPPED
 
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
@@ -250,6 +335,12 @@ class MachinePanelQt(QMainWindow):
 
         self.play_button = QPushButton("Play")
         self.stop_button = QPushButton("Stop")
+        self.stop_button.setStyleSheet("""
+            QPushButton:pressed {
+                background-color: #B71C1C;
+                color: white;
+            }
+            """)
         self.step_forward_button = QPushButton("Next Step")
         self.step_back_button = QPushButton("Back Step")
 
@@ -324,9 +415,12 @@ class MachinePanelQt(QMainWindow):
     
     def start_step_hold(self, action):
         self.step_hold_action = action
+        self.step_repeat_mode = False
 
         action()
-        self.step_repeat_mode = False
+
+        if self.step_hold_action is None:
+            return
 
         # 300ms後にリピート開始判定
         self.step_hold_timer.start(300)
@@ -636,134 +730,259 @@ class MachinePanelQt(QMainWindow):
         if self.on_position_sample is not None:
             self.on_position_sample(position)
 
+    def prepare_program_samples(self):
+        if self.samples:
+            return None
+
+        (
+            samples,
+            normalized_text,
+            parse_error,
+        ) = self.parse_program()
+
+        self.editor.replace_program_text(normalized_text)
+
+        if parse_error is not None:
+            self.samples = []
+            self.sample_index = 0
+            return parse_error
+
+        self.samples = samples
+        self.sample_index = 0
+
+        if not self.samples:
+            return None
+
+        self.interval_combo.setEnabled(False)
+
+        return None
+
+    def format_program_value(self, value: float) -> str:
+        if math.isfinite(value) and value.is_integer():
+            return str(int(value))
+
+        return format(value, ".12g")
+
     def parse_program(self):
         interval_sec = self.get_interval_sec()
+
+        axis_name_map, signal_names = self.get_program_axis_info()
 
         current = {}
         current_feed = 1000.0  # mm/min
         samples = []
 
-        for line_index, line in enumerate(self.get_program_text().splitlines()):
-            line = line.strip()
+        source_lines = self.get_program_text().splitlines()
+        normalized_lines = []
+        first_error = None
+
+        for line_index, source_line in enumerate(source_lines):
+            line = source_line .strip()
 
             if not line:
+                normalized_lines.append("")
                 continue
+            
+            try:
+                line_upper = line.upper()
+                if line_upper.startswith("WAIT"):
+                    wait_text = line[4:].strip()
 
-            line_upper = line.upper()
-            if line_upper.startswith("WAIT "):
-                wait_sec = float(line.split()[1])
+                    if not wait_text:
+                        raise ValueError(
+                            "WAIT requires exactly one value"
+                        )
 
-                step_count = max(
-                    1,
-                    math.ceil(wait_sec / interval_sec)
-                )
+                    if not re.fullmatch(
+                        self.NUMBER_PATTERN,
+                        wait_text,
+                    ):
+                        raise ValueError(
+                            f"Invalid WAIT value: {wait_text}"
+                        )
 
-                for _ in range(step_count):
+                    wait_sec = float(wait_text)
+
+                    if not math.isfinite(wait_sec):
+                        raise ValueError(
+                            "WAIT value must be finite"
+                        )
+
+                    if wait_sec < 0:
+                        raise ValueError(
+                            "WAIT value must not be negative"
+                        )
+
+                    normalized_lines.append(
+                        f"WAIT {self.format_program_value(wait_sec)}"
+                    )
+
+                    step_count = max(
+                        1,
+                        math.ceil(wait_sec / interval_sec)
+                    )
+
+                    for _ in range(step_count):
+                        samples.append({
+                            "position": current.copy(),
+                            "line_index": line_index,
+                        })
+
+                    continue
+
+                target = current.copy()
+                feed = current_feed
+
+                parts = line.split()
+
+                if len(parts) == 2 and parts[1].upper() in ("ON", "OFF"):
+                    normalized_name = parts[0].upper()
+
+                    actual_name = axis_name_map.get(normalized_name)
+
+                    if actual_name is None:
+                        raise ValueError(
+                            f"Unknown signal: {parts[0]}"
+                        )
+
+                    if normalized_name not in signal_names:
+                        raise ValueError(
+                            f"Axis is not a signal: {actual_name}"
+                        )
+
+                    signal_value = (
+                        1.0
+                        if parts[1].upper() == "ON"
+                        else 0.0
+                    )
+
+                    current[actual_name] = signal_value
+
                     samples.append({
                         "position": current.copy(),
                         "line_index": line_index,
                     })
 
-                continue
+                    normalized_lines.append(f"{actual_name} {parts[1].upper()}")
 
-            target = current.copy()
-            feed = current_feed
-
-            parts = line.split()
-
-            if len(parts) == 2 and parts[1].upper() in ("ON", "OFF"):
-                signal_name = parts[0]
-                signal_value = 1.0 if parts[1].upper() == "ON" else 0.0
-
-                current[signal_name] = signal_value
-
-                samples.append({
-                    "position": current.copy(),
-                    "line_index": line_index,
-                })
-
-                continue
-
-            for part in parts:
-                match = re.fullmatch(
-                    r"([A-Za-z]{1,2})([-+]?\d*\.?\d+)",
-                    part
-                )
-                if not match:
-                    raise ValueError(
-                        f"Invalid word: {part}"
+                    continue
+                
+                normalized_words = []
+                for part in parts:
+                    word_type, key, value = self.parse_program_word(
+                        part,
+                        axis_name_map,
                     )
 
-                key = match.group(1).upper()
-                value = float(match.group(2))
+                    value_text = self.format_program_value(
+                        value
+                    )
 
-                if key == "F":
-                    feed = value
-                else:
-                    target[key] = value
+                    if word_type == "feed":
+                        feed = value
 
-                    if key not in current:
-                        current[key] = 0.0
+                        normalized_words.append(
+                            f"F{value_text}"
+                        )
+                    else:
+                        target[key] = value
 
-            moving_axes = set(current.keys()) | set(target.keys())
+                        if key not in current:
+                            current[key] = 0.0
 
-            distance_sq = 0.0
+                        normalized_words.append(
+                            f"{key}={value_text}"
+                        )
+                normalized_line = " ".join(
+                    normalized_words
+                )
 
-            for axis in moving_axes:
-                start_value = current.get(axis, 0.0)
-                end_value = target.get(axis, start_value)
-                diff = end_value - start_value
-                distance_sq += diff * diff
+                moving_axes = set(current.keys()) | set(target.keys())
 
-            distance = math.sqrt(distance_sq)
-
-            if distance <= 1e-9:
-                current = target
-                current_feed = feed
-
-                samples.append({
-                    "position": current.copy(),
-                    "line_index": line_index,
-                })
-                continue
-
-            feed_mm_per_sec = feed / 60.0
-
-            if feed_mm_per_sec <= 1e-9:
-                raise ValueError("Feed must be greater than 0")
-
-            move_time = distance / feed_mm_per_sec
-            step_count = max(1, math.ceil(move_time / interval_sec))
-
-            for i in range(1, step_count + 1):
-                t = i / step_count
-
-                sample = {}
+                distance_sq = 0.0
 
                 for axis in moving_axes:
                     start_value = current.get(axis, 0.0)
                     end_value = target.get(axis, start_value)
+                    diff = end_value - start_value
+                    distance_sq += diff * diff
 
-                    sample[axis] = start_value + (
-                        end_value - start_value
-                    ) * t
+                distance = math.sqrt(distance_sq)
 
-                samples.append({
-                    "position": sample,
-                    "line_index": line_index,
-                })
+                if distance <= 1e-9:
+                    current = target
+                    current_feed = feed
 
-            current = target
-            current_feed = feed
+                    samples.append({
+                        "position": current.copy(),
+                        "line_index": line_index,
+                    })
 
-        return samples
+                    normalized_lines.append(
+                        normalized_line
+                    )
+                    continue
+
+                feed_mm_per_sec = feed / 60.0
+
+                if feed_mm_per_sec <= 1e-9:
+                    raise ValueError("Feed must be greater than 0")
+
+                move_time = distance / feed_mm_per_sec
+                step_count = max(1, math.ceil(move_time / interval_sec))
+
+                for i in range(1, step_count + 1):
+                    t = i / step_count
+
+                    sample = {}
+
+                    for axis in moving_axes:
+                        start_value = current.get(axis, 0.0)
+                        end_value = target.get(axis, start_value)
+
+                        sample[axis] = start_value + (
+                            end_value - start_value
+                        ) * t
+
+                    samples.append({
+                        "position": sample,
+                        "line_index": line_index,
+                    })
+
+                current = target
+                current_feed = feed
+
+                normalized_lines.append(normalized_line)
+
+            except ProgramParseError:
+                raise
+
+            except (ValueError, IndexError) as e:
+                first_error = ProgramParseError(line_index, str(e))
+
+                normalized_lines.extend(source_lines[line_index:])
+                break
+
+        normalized_text = "\n".join(
+            normalized_lines
+        )
+
+        return samples, normalized_text, first_error
     
     def play(self):
+        if self.program_state == ProgramState.RUNNING:
+            return
+            
+        self.editor.clear_line_highlight()
+
         try:
-            if not self.samples:
-                self.samples = self.parse_program()
-                self.sample_index = 0
-                self.interval_combo.setEnabled(False)
+            parse_error = self.prepare_program_samples()
+            if parse_error is not None:
+                self.editor.highlight_error_line(
+                    parse_error.line_index
+                )
+                print(f"Program error: {parse_error}")
+                return
         except ValueError as e:
             print(f"Program error: {e}")
             return
@@ -778,16 +997,22 @@ class MachinePanelQt(QMainWindow):
 
         interval_ms = int(self.get_interval_sec() * 1000)
         self.timer.start(interval_ms)
+        self.program_state = ProgramState.RUNNING
+        self.update_button_state()
     
     def stop(self):
         self.timer.stop()
+        self.stop_step_hold()
         self.samples = []
         self.sample_index = 0
 
         self.interval_combo.setEnabled(True)
 
-        self.set_program_editable(True)
+        self.program_state = ProgramState.STOPPED
+        self.update_button_state()
+
         self.editor.highlight_program_line(None)
+        self.set_program_editable(True)
     
     def _on_timer(self):
         if self.sample_index >= len(self.samples):
@@ -806,35 +1031,51 @@ class MachinePanelQt(QMainWindow):
 
     def step_forward(self):
         self.pause_playback()
-        self.set_program_editable(False)
+
         try:
-            if not self.samples:
-                self.samples = self.parse_program()
-                self.sample_index = 0
-                self.interval_combo.setEnabled(False)
+            parse_error = self.prepare_program_samples()
+
+            if parse_error is not None:
+                self.editor.highlight_error_line(
+                    parse_error.line_index
+                )
+                print(f"Program error: {parse_error}")
+                self.stop_step_hold()
+                return
+
         except ValueError as e:
             print(f"Program error: {e}")
             self.stop_step_hold()
             return
 
+
         if self.sample_index >= len(self.samples):
             return
 
+        self.set_program_editable(False)
         sample_info = self.samples[self.sample_index]
 
         self.editor.highlight_program_line(sample_info["line_index"])
         self.send_position(sample_info["position"])
 
         self.sample_index += 1
+        self.program_state = ProgramState.PAUSED
+        self.update_button_state()
 
     def step_back(self):
         self.pause_playback()
-        self.set_program_editable(False)
+
         try:
-            if not self.samples:
-                self.samples = self.parse_program()
-                self.sample_index = 0
-                self.interval_combo.setEnabled(False)
+            parse_error = self.prepare_program_samples()
+
+            if parse_error is not None:
+                self.editor.highlight_error_line(
+                    parse_error.line_index
+                )
+                print(f"Program error: {parse_error}")
+                self.stop_step_hold()
+                return
+
         except ValueError as e:
             print(f"Program error: {e}")
             self.stop_step_hold()
@@ -843,6 +1084,7 @@ class MachinePanelQt(QMainWindow):
         if not self.samples:
             return
 
+        self.set_program_editable(False)
         self.sample_index = max(0, self.sample_index - 2)
 
         sample_info = self.samples[self.sample_index]
@@ -856,10 +1098,19 @@ class MachinePanelQt(QMainWindow):
         )
 
         self.sample_index += 1
+        self.program_state = ProgramState.PAUSED
+        self.update_button_state()
 
     def pause_playback(self):
         if self.timer.isActive():
             self.timer.stop()
+        
+        if self.samples:
+            self.program_state = ProgramState.PAUSED
+        else:
+            self.program_state = ProgramState.STOPPED
+
+        self.update_button_state()
 
     def set_program_editable(self, editable: bool):
         self.editor.setReadOnly(not editable)
@@ -868,6 +1119,168 @@ class MachinePanelQt(QMainWindow):
     
     def on_interval_changed(self, index):
         self.stop()
+
+    def get_program_axis_info(self):
+        axis_name_map = {}
+        signal_names = set()
+
+        for axis_info in self.machine_axis_info:
+            name = str(axis_info.get("name", "")).strip()
+
+            if not name:
+                continue
+
+            normalized_name = name.upper()
+
+            if normalized_name in axis_name_map:
+                raise ValueError(
+                    f"Duplicate axis name: {name}"
+                )
+
+            axis_name_map[normalized_name] = name
+
+            if axis_info.get("type") == "signal":
+                signal_names.add(normalized_name)
+
+        return axis_name_map, signal_names
+
+    def parse_program_word(self, word, axis_name_map):
+        word = word.strip()
+
+        if not word:
+            raise ValueError("Empty program word")
+
+        # 推奨形式:
+        # X=100
+        # WH1=-30
+        if "=" in word:
+            name_text, value_text = word.split("=", 1)
+
+            normalized_name = name_text.upper()
+
+            if not re.fullmatch(
+                self.NUMBER_PATTERN,
+                value_text,
+            ):
+                raise ValueError(
+                    f"Invalid value: {word}"
+                )
+
+            if normalized_name == "F":
+                return "feed", "F", float(value_text)
+
+            actual_name = axis_name_map.get(normalized_name)
+
+            if actual_name is None:
+                raise ValueError(
+                    f"Unknown axis: {name_text}"
+                )
+
+            return "axis", actual_name, float(value_text)
+
+        word_upper = word.upper()
+
+        # F600
+        if word_upper.startswith("F"):
+            value_text = word[1:]
+
+            if re.fullmatch(
+                self.NUMBER_PATTERN,
+                value_text,
+            ):
+                return "feed", "F", float(value_text)
+
+        # 長い軸名から照合する。
+        # WH1とWHがある場合にWH1を先に判定する。
+        sorted_axis_names = sorted(
+            axis_name_map.keys(),
+            key=len,
+            reverse=True,
+        )
+
+        for normalized_name in sorted_axis_names:
+            if not word_upper.startswith(normalized_name):
+                continue
+
+            value_text = word[len(normalized_name):]
+
+            if not value_text:
+                continue
+
+            if not re.fullmatch(
+                self.NUMBER_PATTERN,
+                value_text,
+            ):
+                continue
+
+            actual_name = axis_name_map[normalized_name]
+
+            return "axis", actual_name, float(value_text)
+
+        raise ValueError(
+            f"Invalid or unknown word: {word}"
+        )
+
+    def update_button_state(self):
+        if self.program_state == ProgramState.RUNNING:
+            # 実行中：緑
+            self.play_button.setStyleSheet(
+                """
+                QPushButton {
+                    background-color: #2E7D32;
+                    color: white;
+                    border: 1px solid #4CAF50;
+                    border-radius: 3px;
+                    font-weight: bold;
+                }
+
+                QPushButton:hover {
+                    background-color: #388E3C;
+                }
+
+                QPushButton:pressed {
+                    background-color: #1B5E20;
+                }
+
+                QPushButton:disabled {
+                    background-color: #355E38;
+                    color: #BDBDBD;
+                    border-color: #48784C;
+                }
+                """
+            )
+
+        elif self.program_state == ProgramState.PAUSED:
+            # 一時停止中：黄色
+            self.play_button.setStyleSheet(
+                """
+                QPushButton {
+                    background-color: #C49000;
+                    color: black;
+                    border: 1px solid #FFD54F;
+                    border-radius: 3px;
+                    font-weight: bold;
+                }
+
+                QPushButton:hover {
+                    background-color: #D9A600;
+                }
+
+                QPushButton:pressed {
+                    background-color: #A67C00;
+                }
+
+                QPushButton:disabled {
+                    background-color: #7A651F;
+                    color: #BDBDBD;
+                    border-color: #927D32;
+                }
+                """
+            )
+
+        else:
+            # 停止中：共通テーマの通常色へ戻す
+            self.play_button.setStyleSheet("")
 
 if __name__ == "__main__":
     app = QApplication([])

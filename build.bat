@@ -39,7 +39,6 @@ REM ============================
     --icon assets\icon.ico ^
     --add-data "assets;assets" ^
     --collect-all open3d ^
-    --collect-all PySide6 ^
     main.py
 
 if errorlevel 1 (
