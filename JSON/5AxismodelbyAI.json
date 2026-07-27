@@ -1,0 +1,408 @@
+{
+  "definitions": {
+    "cube": {
+      "type": "mesh",
+      "file": "cube.ply"
+    },
+    "cylinder": {
+      "type": "mesh",
+      "file": "cylinder.ply"
+    },
+
+    "Tool": {
+      "type": "node",
+      "children": [
+        {
+          "ref": "cylinder",
+          "show_when": "on",
+          "transform": {
+            "scale": [0.18, 1.3, 0.18],
+            "rotation": [90, 0, 0],
+            "position": [0, 0, 1.4]
+          }
+        },
+        {
+          "ref": "cylinder",
+          "show_when": "on",
+          "transform": {
+            "scale": [0.4, 0.35, 0.4],
+            "rotation": [90, 0, 0],
+            "position": [0, 0, 0.25]
+          }
+        }
+      ],
+      "joint": {
+        "name": "Tool",
+        "type": "signal",
+        "signal": "X0.1",
+        "initial_value": 1
+      }
+    },
+
+    "Spindle": {
+      "type": "node",
+      "children": [
+        {
+          "ref": "cylinder",
+          "transform": {
+            "scale": [1.2, 2.2, 1.2],
+            "rotation": [90, 0, 0],
+            "position": [0, 0, 0]
+          }
+        },
+        {
+          "ref": "cylinder",
+          "transform": {
+            "scale": [1.6, 0.9, 1.6],
+            "rotation": [90, 0, 0],
+            "position": [0, 0, -1.8]
+          }
+        },
+        {
+          "ref": "Tool",
+          "transform": {
+            "position": [0, 0, 2.1]
+          }
+        }
+      ]
+    },
+
+    "SpindleHead": {
+      "type": "node",
+      "children": [
+        {
+          "ref": "Spindle"
+        },
+        {
+          "ref": "cube",
+          "transform": {
+            "scale": [2.8, 2.6, 2.2],
+            "position": [0, 0, -2.7]
+          }
+        },
+        {
+          "ref": "cube",
+          "transform": {
+            "scale": [3.5, 1.0, 3.0],
+            "position": [0, 2.8, -3.1],
+            "rotation": [0, 0, 0]
+          }
+        }
+      ]
+    },
+
+    "SpindleX": {
+      "type": "node",
+      "children": [
+        {
+          "ref": "SpindleHead"
+        },
+        {
+          "ref": "cube",
+          "transform": {
+            "scale": [4.0, 1.2, 2.8],
+            "position": [0, 3.6, -3.2]
+          }
+        }
+      ],
+      "joint": {
+        "name": "X",
+        "type": "linear",
+        "axis": [1, 0, 0],
+        "path": 1,
+        "axisno": 1
+      }
+    },
+
+    "SpindleXY": {
+      "type": "node",
+      "children": [
+        {
+          "ref": "SpindleX"
+        },
+        {
+          "ref": "cube",
+          "transform": {
+            "scale": [1.4, 7.0, 2.8],
+            "position": [-5.0, -1.5, -3.5]
+          }
+        },
+        {
+          "ref": "cube",
+          "transform": {
+            "scale": [1.4, 7.0, 2.8],
+            "position": [5.0, -1.5, -3.5]
+          }
+        },
+        {
+          "ref": "cube",
+          "transform": {
+            "scale": [6.4, 1.2, 3.0],
+            "position": [0, 5.8, -3.5]
+          }
+        }
+      ],
+      "joint": {
+        "name": "Y",
+        "type": "linear",
+        "axis": [0, 1, 0],
+        "path": 1,
+        "axisno": 2
+      }
+    },
+
+    "Column": {
+      "type": "node",
+      "children": [
+        {
+          "ref": "SpindleXY",
+          "transform": {
+            "position": [0, 2.5, -6.5]
+          }
+        },
+        {
+          "ref": "cube",
+          "transform": {
+            "scale": [7.0, 8.5, 3.2],
+            "position": [0, -1.5, -10.0]
+          }
+        },
+        {
+          "ref": "cube",
+          "transform": {
+            "scale": [9.0, 1.0, 8.0],
+            "position": [0, -9.0, -4.0]
+          }
+        }
+      ]
+    },
+
+    "Work": {
+      "type": "node",
+      "children": [
+        {
+          "ref": "cube",
+          "show_when": "off",
+          "transform": {
+            "scale": [2.2, 2.4, 2.2],
+            "position": [0, 2.9, 0]
+          }
+        }
+      ],
+      "joint": {
+        "name": "Work",
+        "type": "signal",
+        "signal": "X4.4",
+        "initial_value": 1
+      }
+    },
+
+    "Pallet": {
+      "type": "node",
+      "children": [
+        {
+          "ref": "cube",
+          "transform": {
+            "scale": [3.8, 0.35, 3.8],
+            "position": [0, 0.35, 0]
+          }
+        },
+        {
+          "ref": "cube",
+          "transform": {
+            "scale": [3.3, 0.18, 3.3],
+            "position": [0, 0.8, 0]
+          }
+        },
+        {
+          "ref": "Work"
+        }
+      ]
+    },
+
+    "RotaryTableB": {
+      "type": "node",
+      "children": [
+        {
+          "ref": "Pallet"
+        },
+        {
+          "ref": "cylinder",
+          "transform": {
+            "scale": [3.1, 0.8, 3.1],
+            "position": [0, -0.4, 0]
+          }
+        },
+        {
+          "ref": "cylinder",
+          "transform": {
+            "scale": [2.4, 0.7, 2.4],
+            "position": [0, -1.3, 0]
+          }
+        }
+      ],
+      "joint": {
+        "name": "B",
+        "type": "rotate",
+        "pivot": [0, 0, 0],
+        "axis": [0, 1, 0],
+        "path": 1,
+        "axisno": 4
+      }
+    },
+
+    "ZTableUpperBody": {
+      "type": "node",
+      "children": [
+        {
+          "ref": "RotaryTableB"
+        },
+        {
+          "ref": "cube",
+          "transform": {
+            "scale": [4.4, 1.2, 4.4],
+            "position": [0, -2.2, 0]
+          }
+        },
+        {
+          "ref": "cube",
+          "transform": {
+            "scale": [3.8, 1.0, 3.0],
+            "position": [0, -3.5, 1.5],
+            "rotation": [35, 0, 0]
+          }
+        },
+        {
+          "ref": "cube",
+          "transform": {
+            "scale": [3.5, 1.0, 2.8],
+            "position": [0, -4.6, 3.4],
+            "rotation": [35, 0, 0]
+          }
+        }
+      ]
+    },
+
+    "TiltTableC": {
+      "type": "node",
+      "children": [
+        {
+          "ref": "ZTableUpperBody"
+        }
+      ],
+      "joint": {
+        "name": "C",
+        "type": "rotate",
+        "pivot": [0, -2.2, 0],
+        "axis": [0, 1, 1],
+        "path": 1,
+        "axisno": 5
+      }
+    },
+
+    "ZTypeTableSupport": {
+      "type": "node",
+      "children": [
+        {
+          "ref": "TiltTableC"
+        },
+        {
+          "ref": "cube",
+          "transform": {
+            "scale": [5.5, 1.2, 4.8],
+            "position": [0, -5.7, 3.7],
+            "rotation": [35, 0, 0]
+          }
+        },
+        {
+          "ref": "cube",
+          "transform": {
+            "scale": [5.8, 1.2, 3.0],
+            "position": [0, -7.0, 6.5]
+          }
+        },
+        {
+          "ref": "cylinder",
+          "transform": {
+            "scale": [0.9, 6.0, 0.9],
+            "rotation": [0, 0, 90],
+            "position": [0, -2.2, 0]
+          }
+        }
+      ]
+    },
+
+    "TableZ": {
+      "type": "node",
+      "children": [
+        {
+          "ref": "ZTypeTableSupport"
+        },
+        {
+          "ref": "cube",
+          "transform": {
+            "scale": [7.0, 0.8, 11.0],
+            "position": [0, -8.4, 2.5]
+          }
+        }
+      ],
+      "joint": {
+        "name": "Z",
+        "type": "linear",
+        "axis": [0, 0, 1],
+        "path": 1,
+        "axisno": 3
+      }
+    },
+
+    "MachineBed": {
+      "type": "node",
+      "children": [
+        {
+          "ref": "TableZ",
+          "transform": {
+            "position": [0, 0, 0]
+          }
+        },
+        {
+          "ref": "cube",
+          "transform": {
+            "scale": [10.0, 1.2, 18.0],
+            "position": [0, -10.0, 0]
+          }
+        },
+        {
+          "ref": "cube",
+          "transform": {
+            "scale": [1.0, 1.0, 15.0],
+            "position": [-6.0, -8.5, 0]
+          }
+        },
+        {
+          "ref": "cube",
+          "transform": {
+            "scale": [1.0, 1.0, 15.0],
+            "position": [6.0, -8.5, 0]
+          }
+        }
+      ]
+    }
+  },
+
+  "scene": [
+    {
+      "ref": "Column",
+      "transform": {
+        "scale": 1.0,
+        "position": [0, 0, -7.0]
+      }
+    },
+    {
+      "ref": "MachineBed",
+      "transform": {
+        "scale": 1.0,
+        "position": [0, 0, 5.0]
+      }
+    }
+  ]
+}

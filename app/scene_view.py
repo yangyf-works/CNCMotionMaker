@@ -1611,6 +1611,7 @@ class SceneView:
         combined_scene = raycast_context["combined_scene"]
         mesh_scenes = raycast_context["mesh_scenes"]
         scene_size = raycast_context["scene_size"]
+        axis_length = self.get_rotation_axis_length(scene_size)
 
         if not mesh_scenes:
             return None
@@ -1665,7 +1666,7 @@ class SceneView:
 
             segment_length = next_t - t_hit
 
-            if segment_length <= merge_epsilon:
+            if segment_length <= axis_length:
                 continue
 
             # セグメントの中心点
@@ -1707,6 +1708,10 @@ class SceneView:
 
             match joint.type:
                 case "rotate":
+                    bbox = self.get_node_bbox(node)
+                    if bbox is None:
+                        continue
+
                     reverse_arrow = False
                     draw_direction = direction.copy()
 
@@ -1714,15 +1719,34 @@ class SceneView:
                         draw_direction = -draw_direction
                         reverse_arrow = True
 
+                    bbox_points = np.asarray(
+                        bbox.get_box_points(),
+                        dtype=float,
+                    )
+
+                    # 回転軸方向に対して最もマイナス側のBBox頂点
+                    projection_values = bbox_points @ draw_direction
+                    minus_point = bbox_points[np.argmin(projection_values)]
+
+                    # minus側の点を本来の回転軸へ投影
+                    ray_origin = (
+                        origin
+                        + draw_direction
+                        * np.dot(
+                            minus_point - origin,
+                            draw_direction,
+                        )
+                    )
+
                     axis_start = self.find_first_outside_intersection(
-                        origin=origin,
+                        origin=ray_origin,
                         direction=draw_direction,
                         raycast_context=raycast_context,
                     )
 
                     self.create_rotation_axis_line(
                         name=f"joint_axis_{node.name}",
-                        origin=origin,
+                        origin=ray_origin,
                         direction=draw_direction,
                         start=axis_start,
                         bbox=scene_bbox,
@@ -1771,6 +1795,14 @@ class SceneView:
                 case "signal":
                     continue
 
+    def get_rotation_axis_length(self, scene_size):
+        scene_size = max(float(scene_size), 1.0)
+
+        return max(
+            scene_size * self.rotation_axis_length_ratio,
+            self.rotation_axis_min_length,
+        )
+        
     def create_rotation_axis_line(
         self,
         name,
@@ -1794,12 +1826,7 @@ class SceneView:
 
         scene_size = float(np.linalg.norm(bbox.get_extent()))
         scene_size = max(scene_size, 1.0)
-
-        # 固定長。必要ならクラス変数にする
-        axis_length = max(
-            scene_size * self.rotation_axis_length_ratio,
-            self.rotation_axis_min_length,
-        )
+        axis_length = self.get_rotation_axis_length(scene_size)
 
         # レイで有効な出口が見つからなかった場合のフォールバック
         if start is None:
