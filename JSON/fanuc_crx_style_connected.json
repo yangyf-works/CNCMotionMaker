@@ -1,0 +1,479 @@
+{
+  "definitions": {
+    "cube": {
+      "type": "mesh",
+      "file": "cube.ply"
+    },
+    "cylinder": {
+      "type": "mesh",
+      "file": "cylinder.ply"
+    },
+    "sphere": {
+      "type": "mesh",
+      "file": "sphere.ply"
+    },
+    "RobotTool": {
+      "type": "node",
+      "children": [
+        {
+          "ref": "cylinder",
+          "show_when": "on",
+          "transform": {
+            "scale": [
+              0.22,
+              0.8,
+              0.22
+            ],
+            "position": [
+              0,
+              0.4,
+              0
+            ]
+          }
+        },
+        {
+          "ref": "cube",
+          "show_when": "on",
+          "transform": {
+            "scale": [
+              0.35,
+              0.15,
+              0.5
+            ],
+            "position": [
+              0,
+              0.9,
+              0
+            ]
+          }
+        }
+      ],
+      "joint": {
+        "name": "Tool",
+        "type": "signal",
+        "signal": "X0.1",
+        "initial_value": 1
+      }
+    },
+    "J6Flange": {
+      "type": "node",
+      "children": [
+        {
+          "ref": "cylinder",
+          "transform": {
+            "scale": [
+              0.42,
+              0.55,
+              0.42
+            ],
+            "position": [
+              0,
+              0.275,
+              0
+            ]
+          }
+        },
+        {
+          "ref": "RobotTool",
+          "transform": {
+            "position": [
+              0,
+              0.55,
+              0
+            ]
+          }
+        }
+      ],
+      "joint": {
+        "name": "J6",
+        "type": "rotate",
+        "pivot": [
+          0,
+          0,
+          0
+        ],
+        "axis": [
+          0,
+          1,
+          0
+        ],
+        "path": 1,
+        "axisno": 6,
+        "initial_value": 0
+      }
+    },
+    "WristJ5": {
+      "type": "node",
+      "children": [
+        {
+          "ref": "sphere",
+          "transform": {
+            "scale": [
+              0.68,
+              0.68,
+              0.68
+            ],
+            "position": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "ref": "J6Flange",
+          "transform": {
+            "position": [
+              0,
+              0.55,
+              0
+            ]
+          }
+        }
+      ],
+      "joint": {
+        "name": "J5",
+        "type": "rotate",
+        "pivot": [
+          0,
+          0,
+          0
+        ],
+        "axis": [
+          1,
+          0,
+          0
+        ],
+        "path": 1,
+        "axisno": 5,
+        "initial_value": -60
+      }
+    },
+    "ForearmJ4": {
+      "type": "node",
+      "children": [
+        {
+          "ref": "sphere",
+          "transform": {
+            "scale": [
+              0.78,
+              0.78,
+              0.78
+            ],
+            "position": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "ref": "cylinder",
+          "transform": {
+            "scale": [
+              0.52,
+              3.8,
+              0.52
+            ],
+            "position": [
+              0,
+              1.9,
+              0
+            ]
+          }
+        },
+        {
+          "ref": "WristJ5",
+          "transform": {
+            "position": [
+              0,
+              3.8,
+              0
+            ]
+          }
+        }
+      ],
+      "joint": {
+        "name": "J4",
+        "type": "rotate",
+        "pivot": [
+          0,
+          0,
+          0
+        ],
+        "axis": [
+          0,
+          1,
+          0
+        ],
+        "path": 1,
+        "axisno": 4,
+        "initial_value": 0
+      }
+    },
+    "ElbowJ3": {
+      "type": "node",
+      "children": [
+        {
+          "ref": "sphere",
+          "transform": {
+            "scale": [
+              0.95,
+              0.95,
+              0.95
+            ],
+            "position": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "ref": "ForearmJ4",
+          "transform": {
+            "position": [
+              0,
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "joint": {
+        "name": "J3",
+        "type": "rotate",
+        "pivot": [
+          0,
+          0,
+          0
+        ],
+        "axis": [
+          0,
+          0,
+          1
+        ],
+        "path": 1,
+        "axisno": 3,
+        "initial_value": 115
+      }
+    },
+    "UpperArmJ2": {
+      "type": "node",
+      "children": [
+        {
+          "ref": "sphere",
+          "transform": {
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "position": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "ref": "cylinder",
+          "transform": {
+            "scale": [
+              0.78,
+              5.0,
+              0.78
+            ],
+            "position": [
+              0,
+              2.5,
+              0
+            ]
+          }
+        },
+        {
+          "ref": "ElbowJ3",
+          "transform": {
+            "position": [
+              0,
+              5.0,
+              0
+            ]
+          }
+        }
+      ],
+      "joint": {
+        "name": "J2",
+        "type": "rotate",
+        "pivot": [
+          0,
+          0,
+          0
+        ],
+        "axis": [
+          0,
+          0,
+          1
+        ],
+        "path": 1,
+        "axisno": 2,
+        "initial_value": -55
+      }
+    },
+    "ShoulderHousing": {
+      "type": "node",
+      "children": [
+        {
+          "ref": "sphere",
+          "transform": {
+            "scale": [
+              1.25,
+              1.25,
+              1.25
+            ],
+            "position": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "ref": "cylinder",
+          "transform": {
+            "scale": [
+              1.05,
+              1.4,
+              1.05
+            ],
+            "position": [
+              0,
+              -0.7,
+              0
+            ]
+          }
+        },
+        {
+          "ref": "UpperArmJ2",
+          "transform": {
+            "position": [
+              0,
+              0,
+              0
+            ]
+          }
+        }
+      ]
+    },
+    "BaseJ1": {
+      "type": "node",
+      "children": [
+        {
+          "ref": "cylinder",
+          "transform": {
+            "scale": [
+              1.8,
+              0.8,
+              1.8
+            ],
+            "position": [
+              0,
+              0.4,
+              0
+            ]
+          }
+        },
+        {
+          "ref": "cylinder",
+          "transform": {
+            "scale": [
+              1.35,
+              1.8,
+              1.35
+            ],
+            "position": [
+              0,
+              1.7,
+              0
+            ]
+          }
+        },
+        {
+          "ref": "ShoulderHousing",
+          "transform": {
+            "position": [
+              0,
+              2.6,
+              0
+            ]
+          }
+        }
+      ],
+      "joint": {
+        "name": "J1",
+        "type": "rotate",
+        "pivot": [
+          0,
+          0,
+          0
+        ],
+        "axis": [
+          0,
+          1,
+          0
+        ],
+        "path": 1,
+        "axisno": 1,
+        "initial_value": 0
+      }
+    },
+    "RobotPedestal": {
+      "type": "node",
+      "children": [
+        {
+          "ref": "cube",
+          "transform": {
+            "scale": [
+              2.7,
+              0.45,
+              2.7
+            ],
+            "position": [
+              0,
+              -0.225,
+              0
+            ]
+          }
+        },
+        {
+          "ref": "BaseJ1",
+          "transform": {
+            "position": [
+              0,
+              0,
+              0
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "scene": [
+    {
+      "ref": "RobotPedestal",
+      "transform": {
+        "scale": 1.0,
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ]
+      }
+    }
+  ]
+}
