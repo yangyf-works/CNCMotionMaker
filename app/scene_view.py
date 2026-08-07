@@ -90,8 +90,147 @@ class SceneView:
         self.double_click_interval = 0.3
         self.double_click_distance = 5
 
+        self.on_marker_added = None
+        self.on_clear_markers = None
+
+        self.markers = {}
+
+        self.marker_geometry_names = set()
+
+        self.marker_material = rendering.MaterialRecord()
+        self.marker_material.shader = "defaultLit"
+        self.marker_material.base_color = [1.0, 0.0, 0.0, 1.0]
+        self.marker_radius = 1.0
+
         self.initial_camera_state = None
         self._create_test_geometry()
+
+    def get_node_path(self, target_node):
+        result = None
+
+        def walk(node, path):
+            nonlocal result
+
+            if node is target_node:
+                result = tuple(path)
+                return True
+
+            for i, child in enumerate(
+                getattr(node, "children", [])
+            ):
+                if walk(child, path + [i]):
+                    return True
+
+            return False
+
+        for root_index, root in enumerate(self.roots):
+            if walk(root, [root_index]):
+                break
+
+        return result
+
+    def find_node_by_path(self, node_path):
+        if not node_path:
+            return None
+
+        root_index = node_path[0]
+
+        if root_index < 0 or root_index >= len(self.roots):
+            return None
+
+        node = self.roots[root_index]
+
+        for child_index in node_path[1:]:
+            children = getattr(node, "children", [])
+
+            if child_index < 0 or child_index >= len(children):
+                return None
+
+            node = children[child_index]
+
+        return node
+        
+    def add_marker(self, marker):
+        marker_id = marker["id"]
+        name = f"marker_{marker_id}"
+
+        self.markers[marker_id] = marker
+
+        if self.widget.scene.has_geometry(name):
+            self.widget.scene.remove_geometry(name)
+
+        sphere = o3d.geometry.TriangleMesh.create_sphere(
+            radius=self.marker_radius,
+            resolution=16,
+        )
+
+        sphere.compute_vertex_normals()
+        sphere.paint_uniform_color([1.0, 0.0, 0.0])
+
+        self.widget.scene.add_geometry(
+            name,
+            sphere,
+            self.marker_material,
+        )
+
+        self.marker_geometry_names.add(name)
+
+        self.update_marker(marker)
+        self.widget.force_redraw()
+
+    def update_marker(self, marker):
+        name = f"marker_{marker['id']}"
+
+        if not self.widget.scene.has_geometry(name):
+            return
+
+        node = self.find_node_by_path(
+            marker["node_path"]
+        )
+
+        if node is None:
+            return
+
+        local_position = np.asarray(
+            marker["local_position"],
+            dtype=float,
+        )
+
+        display_T = (
+            self.get_display_correction_T()
+            @ node.world_T
+        )
+
+        p = np.array([
+            local_position[0],
+            local_position[1],
+            local_position[2],
+            1.0,
+        ])
+
+        display_position = (display_T @ p)[:3]
+
+        T = np.eye(4)
+        T[:3, 3] = display_position
+
+        self.widget.scene.set_geometry_transform(
+            name,
+            T,
+        )
+
+    def update_markers(self):
+        for marker in self.markers.values():
+            self.update_marker(marker)
+
+    def clear_markers(self):
+        for name in list(self.marker_geometry_names):
+            if self.widget.scene.has_geometry(name):
+                self.widget.scene.remove_geometry(name)
+
+        self.marker_geometry_names.clear()
+        self.markers.clear()
+
+        self.widget.force_redraw()
 
     def _create_test_geometry(self):
         axis = o3d.geometry.TriangleMesh.create_coordinate_frame(
@@ -126,6 +265,10 @@ class SceneView:
 
             self.fit_camera_to_model()
             self.save_initial_camera_state()
+
+            bbox = self.get_scene_bbox()
+            scene_size = np.linalg.norm(bbox.get_extent())
+            self.marker_radius = scene_size * 0.008
 
         except Exception:
             traceback.print_exc()
@@ -249,6 +392,7 @@ class SceneView:
             gui.KeyName.C: self.on_reset_camera,
             gui.KeyName.S: self.on_save_stl,
             gui.KeyName.L: self.on_reset_light,
+            gui.KeyName.R: self.request_clear_markers,
             gui.KeyName.UP: lambda: self.on_camera_zoom(+1),
             gui.KeyName.DOWN: lambda: self.on_camera_zoom(-1),
             gui.KeyName.LEFT: lambda: self.set_camera_fov(-self.camera_fov_step),
@@ -293,17 +437,26 @@ class SceneView:
     def _on_mouse(self, event):
         alt = event.is_modifier_down(gui.KeyModifier.ALT)
         ctrl = event.is_modifier_down(gui.KeyModifier.CTRL)
+        shift = event.is_modifier_down(gui.KeyModifier.SHIFT)
 
         if event.type == gui.MouseEvent.Type.BUTTON_DOWN:
             if self.on_mouse_down is not None:
                 self.on_mouse_down()
+            if (
+                event.is_button_down(gui.MouseButton.LEFT)
+                and shift
+                and self._is_double_click(event)
+            ):
+                if self.pick_model(event.x, event.y) is None:
+                    self.clear_selected_joint()
+
+                return gui.Widget.EventCallbackResult.CONSUMED
 
             if (event.is_button_down(gui.MouseButton.LEFT)
                 and ctrl
                 and self._is_double_click(event)
             ):
-                if self.pick_model(event.x, event.y) is None:
-                    self.clear_selected_joint()
+                self.pick_marker_position(event.x, event.y)
 
                 return gui.Widget.EventCallbackResult.CONSUMED
 
@@ -331,7 +484,10 @@ class SceneView:
 
         return gui.Widget.EventCallbackResult.IGNORED
     
-    
+    def request_clear_markers(self):
+        if self.on_clear_markers is not None:
+            self.on_clear_markers()
+
     def _rotate_sun_by_mouse(self, dx, dy):
 
         deg_per_pixel = 0.25
@@ -492,6 +648,8 @@ class SceneView:
 
         if self.show_axis:
             self.create_joint_axis_labels()
+
+        self.update_markers()
 
         self.widget.force_redraw()
 
@@ -1361,6 +1519,202 @@ class SceneView:
 
         return is_double
     
+    def pick_marker_position(
+        self,
+        mouse_x,
+        mouse_y,
+    ):
+        frame = self.widget.frame
+
+        local_x = int(mouse_x - frame.x)
+        local_y = int(mouse_y - frame.y)
+
+        width = int(frame.width)
+        height = int(frame.height)
+
+        if (
+            width <= 0
+            or height <= 0
+            or local_x < 0
+            or local_y < 0
+            or local_x >= width
+            or local_y >= height
+        ):
+            return None
+
+        selectable_meshes = collect_visible_meshes(
+            self.roots
+        )
+
+        if not selectable_meshes:
+            return None
+
+        ray_scene = o3d.t.geometry.RaycastingScene()
+        geometry_id_to_item = {}
+
+        correction_T = self.get_display_correction_T()
+
+        for item in selectable_meshes:
+            mesh_world = o3d.geometry.TriangleMesh(
+                item["mesh"]
+            )
+
+            display_T = (
+                correction_T
+                @ item["world_T"]
+            )
+
+            mesh_world.transform(display_T)
+
+            if len(mesh_world.triangles) == 0:
+                continue
+
+            tensor_mesh = (
+                o3d.t.geometry.TriangleMesh.from_legacy(
+                    mesh_world
+                )
+            )
+
+            geometry_id = ray_scene.add_triangles(
+                tensor_mesh
+            )
+
+            geometry_id_to_item[
+                int(geometry_id)
+            ] = item
+
+        if not geometry_id_to_item:
+            return None
+
+        camera = self.widget.scene.camera
+
+        camera_model = np.asarray(
+            camera.get_model_matrix(),
+            dtype=np.float64,
+        )
+
+        eye = camera_model[:3, 3]
+
+        world_point = np.asarray(
+            camera.unproject(
+                local_x + 0.5,
+                local_y + 0.5,
+                0.5,
+                width,
+                height,
+            ),
+            dtype=np.float64,
+        )
+
+        ray_direction = world_point - eye
+
+        length = np.linalg.norm(
+            ray_direction
+        )
+
+        if (
+            not np.all(np.isfinite(eye))
+            or not np.all(
+                np.isfinite(world_point)
+            )
+            or not np.isfinite(length)
+            or length <= 1e-9
+        ):
+            return None
+
+        ray_direction /= length
+
+        ray = o3d.core.Tensor(
+            [[
+                eye[0],
+                eye[1],
+                eye[2],
+                ray_direction[0],
+                ray_direction[1],
+                ray_direction[2],
+            ]],
+            dtype=o3d.core.Dtype.Float32,
+        )
+
+        result = ray_scene.cast_rays(ray)
+
+        geometry_id = int(
+            result["geometry_ids"][0].item()
+        )
+
+        invalid_id = (
+            o3d.t.geometry.RaycastingScene.INVALID_ID
+        )
+
+        # ヒット無し
+        if geometry_id == invalid_id:
+            return None
+
+        t_hit = float(
+            result["t_hit"][0].item()
+        )
+
+        if not np.isfinite(t_hit):
+            return None
+
+        item = geometry_id_to_item.get(
+            geometry_id
+        )
+
+        if item is None:
+            return None
+
+        # 画面表示座標上のヒット位置
+        hit_position = (
+            eye
+            + ray_direction * t_hit
+        )
+
+        hit_node = item["node"]
+
+        node_path = self.get_node_path(
+            hit_node
+        )
+
+        if node_path is None:
+            return None
+
+        # Raycastに使用したものと同じTransform
+        display_T = (
+            correction_T
+            @ item["world_T"]
+        )
+
+        try:
+            inverse_T = np.linalg.inv(
+                display_T
+            )
+        except np.linalg.LinAlgError:
+            return None
+
+        hit_h = np.array([
+            hit_position[0],
+            hit_position[1],
+            hit_position[2],
+            1.0,
+        ])
+
+        # ヒットモデルのローカル座標へ変換
+        local_position = (
+            inverse_T @ hit_h
+        )[:3]
+
+        if self.on_marker_added is not None:
+            self.on_marker_added(
+                node_path,
+                local_position,
+            )
+
+        return {
+            "node_path": node_path,
+            "local_position": local_position,
+        }
+        
     def pick_model(self, mouse_x, mouse_y):
         frame = self.widget.frame
 
