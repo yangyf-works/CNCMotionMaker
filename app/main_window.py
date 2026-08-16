@@ -199,10 +199,23 @@ class MainWindow:
         )
         self.remove_view_button.enabled = False
 
+        self.trajectory_button = gui.Button("Trace ON")
+        self.trajectory_button.background_color = gui.Color(
+            0.2, 0.5, 0.9
+        )
+        self.trajectory_button.set_on_clicked(
+            self._on_trajectory_button_clicked
+        )
+
+        self.scene_manager.on_trajectory_state_changed = (
+            self._on_trajectory_state_changed
+        )
+
         self.window.add_child(self.scene_view.widget)
         self.window.add_child(self.control_panel.widget)
         self.window.add_child(self.add_view_button)
         self.window.add_child(self.remove_view_button)
+        self.window.add_child(self.trajectory_button)
 
         self.window.set_on_layout(self._on_layout)
         self.window.set_on_close(self._on_close)
@@ -219,6 +232,25 @@ class MainWindow:
             self.window,
             self._initialize_window_layout
         )
+
+    def _on_trajectory_button_clicked(self):
+        self.scene_manager.toggle_trajectory()
+
+    def _on_trajectory_state_changed(self, enabled):
+        if enabled:
+            self.trajectory_button.text = "Trace ON"
+            self.trajectory_button.background_color = gui.Color(
+                0.2, 0.5, 0.9
+            )
+        else:
+            self.trajectory_button.text = "Trace OFF"
+            self.trajectory_button.background_color = gui.Color(
+                0.3, 0.3, 0.3
+            )
+        self.window.set_needs_layout()
+
+    def _on_trajectory_interval_changed(self, interval_seconds):
+        self.scene_manager.set_trajectory_interval(interval_seconds)
 
     def _on_add_view_clicked(self):
         if len(self._get_open3d_windows()) >= 4:
@@ -575,6 +607,14 @@ class MainWindow:
         button_width = int(4 * em)
         button_height = int(2 * em)
         margin = int(0.5 * em)
+
+        trajectory_button_width = int(6 * em)
+        self.trajectory_button.frame = gui.Rect(
+            rect.x + margin,
+            rect.y + margin,
+            trajectory_button_width,
+            button_height,
+        )
 
         self.remove_view_button.frame = gui.Rect(
             rect.x + rect.width

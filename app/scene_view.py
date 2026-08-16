@@ -92,15 +92,26 @@ class SceneView:
 
         self.on_marker_added = None
         self.on_clear_markers = None
+        self.on_toggle_trajectory = None
+        self.on_trajectory_reference_changed = None
 
         self.markers = {}
 
         self.marker_geometry_names = set()
 
+        # Per-view reference-transform history for trajectory display.
+        # trajectory_points themselves remain Machine World coordinates.
+        self.trajectory_reference_transforms = {}
+
         self.marker_material = rendering.MaterialRecord()
         self.marker_material.shader = "defaultLit"
         self.marker_material.base_color = [1.0, 0.0, 0.0, 1.0]
         self.marker_radius = 1.0
+
+        self.trajectory_geometry_names = set()
+        self.trajectory_material = rendering.MaterialRecord()
+        self.trajectory_material.shader = "unlitLine"
+        self.trajectory_material.line_width = 1.0
 
         self.initial_camera_state = None
         self._create_test_geometry()
@@ -155,6 +166,7 @@ class SceneView:
         name = f"marker_{marker_id}"
 
         self.markers[marker_id] = marker
+        self.trajectory_reference_transforms.setdefault(marker_id, [])
 
         if self.widget.scene.has_geometry(name):
             self.widget.scene.remove_geometry(name)
@@ -222,6 +234,173 @@ class SceneView:
         for marker in self.markers.values():
             self.update_marker(marker)
 
+    def get_marker_world_position(self, marker):
+        node = self.find_node_by_path(marker["node_path"])
+        if node is None:
+            return None
+
+        local_position = np.asarray(
+            marker["local_position"],
+            dtype=float,
+        )
+
+        p = np.array([
+            local_position[0],
+            local_position[1],
+            local_position[2],
+            1.0,
+        ])
+
+        return (node.world_T @ p)[:3]
+
+    def append_trajectory_reference(self, marker):
+        marker_id = marker["id"]
+        references = self.trajectory_reference_transforms.setdefault(
+            marker_id,
+            [],
+        )
+
+        if (
+            self.selected_joint_node is not None
+            and self.selected_joint_lock_T is not None
+        ):
+            references.append(
+                np.asarray(
+                    self.selected_joint_node.world_T,
+                    dtype=float,
+                ).copy()
+            )
+        else:
+            references.append(None)
+
+    def update_trajectory(self, marker):
+        marker_id = marker["id"]
+        name = f"trajectory_{marker_id}"
+        points = marker.get("trajectory_points", [])
+
+        # A line requires at least two points. If an older line exists but the
+        # history was reset, remove it.
+        if len(points) < 2:
+            if self.widget.scene.has_geometry(name):
+                self.widget.scene.remove_geometry(name)
+            self.trajectory_geometry_names.discard(name)
+            return
+
+        references = self.trajectory_reference_transforms.get(
+            marker_id,
+            [],
+        )
+        display_points = []
+
+        fixed_mode = (
+            self.selected_joint_node is not None
+            and self.selected_joint_lock_T is not None
+        )
+
+        for index, point in enumerate(points):
+            point = np.asarray(point, dtype=float)
+            p = np.array([
+                point[0],
+                point[1],
+                point[2],
+                1.0,
+            ])
+
+            if fixed_mode and index < len(references):
+                reference_T = references[index]
+
+                if reference_T is not None:
+                    try:
+                        # World point -> joint coordinates at sample time
+                        # -> locked display pose.
+                        display_p = (
+                            self.selected_joint_lock_T
+                            @ np.linalg.inv(reference_T)
+                            @ p
+                        )
+                        display_points.append(display_p[:3])
+                        continue
+                    except np.linalg.LinAlgError:
+                        pass
+
+            # Existing behavior when no usable fixed reference exists.
+            display_points.append(
+                (self.get_display_correction_T() @ p)[:3]
+            )
+
+        # Fixed-joint conversion can make different Machine World samples
+        # collapse to the same display position. Filament cannot build a
+        # Renderable for a LineSet whose AABB is empty (for example, when all
+        # displayed points are identical), so remove invalid/duplicate points
+        # before creating geometry.
+        filtered_points = []
+
+        for point in display_points:
+            point = np.asarray(point, dtype=float)
+
+            if not np.all(np.isfinite(point)):
+                continue
+
+            if (
+                filtered_points
+                and np.linalg.norm(point - filtered_points[-1]) <= 1e-9
+            ):
+                continue
+
+            filtered_points.append(point)
+
+        # A valid trajectory needs at least one non-zero-length segment.
+        if len(filtered_points) < 2:
+            if self.widget.scene.has_geometry(name):
+                self.widget.scene.remove_geometry(name)
+            self.trajectory_geometry_names.discard(name)
+            return
+
+        lines = [
+            [i, i + 1]
+            for i in range(len(filtered_points) - 1)
+        ]
+
+        # Extra guard against a completely collapsed AABB.
+        points_array = np.asarray(filtered_points, dtype=float)
+        extent = points_array.max(axis=0) - points_array.min(axis=0)
+
+        if np.linalg.norm(extent) <= 1e-9:
+            if self.widget.scene.has_geometry(name):
+                self.widget.scene.remove_geometry(name)
+            self.trajectory_geometry_names.discard(name)
+            return
+
+        line_set = o3d.geometry.LineSet()
+        line_set.points = o3d.utility.Vector3dVector(filtered_points)
+        line_set.lines = o3d.utility.Vector2iVector(lines)
+        line_set.colors = o3d.utility.Vector3dVector(
+            [[1.0, 0.2, 0.2] for _ in lines]
+        )
+
+        if self.widget.scene.has_geometry(name):
+            self.widget.scene.remove_geometry(name)
+
+        self.widget.scene.add_geometry(
+            name,
+            line_set,
+            self.trajectory_material,
+        )
+        self.trajectory_geometry_names.add(name)
+
+    def update_trajectories(self):
+        for marker in self.markers.values():
+            self.update_trajectory(marker)
+
+    def clear_trajectories(self):
+        for name in list(self.trajectory_geometry_names):
+            if self.widget.scene.has_geometry(name):
+                self.widget.scene.remove_geometry(name)
+
+        self.trajectory_geometry_names.clear()
+        self.trajectory_reference_transforms.clear()
+        self.widget.force_redraw()
+
     def clear_markers(self):
         for name in list(self.marker_geometry_names):
             if self.widget.scene.has_geometry(name):
@@ -230,6 +409,7 @@ class SceneView:
         self.marker_geometry_names.clear()
         self.markers.clear()
 
+        self.clear_trajectories()
         self.widget.force_redraw()
 
     def _create_test_geometry(self):
@@ -393,6 +573,7 @@ class SceneView:
             gui.KeyName.S: self.on_save_stl,
             gui.KeyName.L: self.on_reset_light,
             gui.KeyName.R: self.request_clear_markers,
+            gui.KeyName.T: self.request_toggle_trajectory,
             gui.KeyName.UP: lambda: self.on_camera_zoom(+1),
             gui.KeyName.DOWN: lambda: self.on_camera_zoom(-1),
             gui.KeyName.LEFT: lambda: self.set_camera_fov(-self.camera_fov_step),
@@ -487,6 +668,10 @@ class SceneView:
     def request_clear_markers(self):
         if self.on_clear_markers is not None:
             self.on_clear_markers()
+
+    def request_toggle_trajectory(self):
+        if self.on_toggle_trajectory is not None:
+            self.on_toggle_trajectory()
 
     def _rotate_sun_by_mouse(self, dx, dy):
 
@@ -650,6 +835,7 @@ class SceneView:
             self.create_joint_axis_labels()
 
         self.update_markers()
+        self.update_trajectories()
 
         self.widget.force_redraw()
 
@@ -1824,6 +2010,11 @@ class SceneView:
         self.selected_joint_node = joint_node
         self.selected_joint_lock_T = joint_node.world_T.copy()
 
+        # The trajectory reference coordinate system changed.
+        # Clear only the trajectory; markers and Trace ON/OFF stay unchanged.
+        if self.on_trajectory_reference_changed is not None:
+            self.on_trajectory_reference_changed()
+
         self.refresh_model(model_reset=False)
 
         print(
@@ -1883,6 +2074,9 @@ class SceneView:
         self.selected_joint = None
         self.selected_joint_node = None
         self.selected_joint_lock_T = None
+
+        if had_selection and self.on_trajectory_reference_changed is not None:
+            self.on_trajectory_reference_changed()
 
         if refresh and had_selection and self.roots:
             self.refresh_model(False)

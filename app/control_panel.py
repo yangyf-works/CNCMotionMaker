@@ -4,11 +4,18 @@ import open3d.visualization.gui as gui # type: ignore
 
 class ControlPanel:
 
-    def __init__(self, json_dir: Path, on_json_selected, on_toggle_panel):
+    def __init__(
+        self,
+        json_dir: Path,
+        on_json_selected,
+        on_toggle_panel,
+        on_trajectory_interval_changed=None,
+    ):
 
         self.json_dir = json_dir
         self.on_json_selected = on_json_selected
         self.on_toggle_panel = on_toggle_panel
+        self.on_trajectory_interval_changed = on_trajectory_interval_changed
 
         self.json_files = self._find_json_files()
 
@@ -47,6 +54,17 @@ class ControlPanel:
 
         self.widget.add_child(self.load_button)
         self._add_manual()
+
+    def _on_trajectory_interval_changed(self, text, index):
+        if self.on_trajectory_interval_changed is None:
+            return
+
+        try:
+            interval_ms = float(text.split()[0])
+        except (ValueError, IndexError):
+            return
+
+        self.on_trajectory_interval_changed(interval_ms / 1000.0)
 
     def _on_toggle_clicked(self):
         self.on_toggle_panel()

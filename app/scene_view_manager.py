@@ -1,4 +1,8 @@
-import open3d.visualization.gui as gui # type: ignore
+import time
+
+import numpy as np
+import open3d.visualization.gui as gui  # type: ignore
+
 
 class SceneViewManager:
     def __init__(self):
@@ -7,7 +11,16 @@ class SceneViewManager:
 
         self.markers = []
         self.next_marker_id = 0
-        
+
+        # Trajectory recording state
+        self.trajectory_enabled = True
+        self.trajectory_interval = 0.05  # 50 ms
+        self.last_trajectory_sample_time = 0.0
+        self.trajectory_min_distance = 1e-6
+
+        # Optional UI callback: callback(enabled: bool)
+        self.on_trajectory_state_changed = None
+
     def clear_views(self):
         self.views.clear()
 
@@ -19,18 +32,30 @@ class SceneViewManager:
 
         view.on_marker_added = self.add_marker
         view.on_clear_markers = self.clear_markers
+        view.on_toggle_trajectory = self.toggle_trajectory
+        view.on_trajectory_reference_changed = self.clear_trajectories
+
+        # Open3D GUI tick callback. Multiple windows may call this callback,
+        # but the manager-side time gate prevents duplicate sampling.
+        view.window.set_on_tick_event(self._on_trajectory_tick)
 
         if self.current_json_path is not None:
             view.load_json_model(self.current_json_path)
+
+            # Restore existing markers and their trajectories in the new view.
             for marker in self.markers:
                 view.add_marker(marker)
+                view.update_trajectory(marker)
+
             view.widget.force_redraw()
 
     def add_marker(self, node_path, local_position):
         marker = {
             "id": self.next_marker_id,
             "node_path": tuple(node_path),
-            "local_position": local_position.copy(),
+            "local_position": np.asarray(local_position, dtype=float).copy(),
+            "trajectory_points": [],
+            "last_trajectory_position": None,
         }
 
         self.next_marker_id += 1
@@ -49,12 +74,153 @@ class SceneViewManager:
 
             gui.Application.instance.post_to_main_thread(
                 window,
-                update_view
+                update_view,
             )
+
+    def set_trajectory_enabled(self, enabled):
+        enabled = bool(enabled)
+
+        if self.trajectory_enabled == enabled:
+            return
+
+        self.trajectory_enabled = enabled
+
+        if enabled:
+            # Start a new trajectory from the current marker positions.
+            self.last_trajectory_sample_time = 0.0
+            for marker in self.markers:
+                marker["last_trajectory_position"] = None
+        else:
+            # OFF means recording stops and all existing trajectory history
+            # and trajectory geometry are cleared. Markers themselves remain.
+            self.clear_trajectories()
+
+        if self.on_trajectory_state_changed is not None:
+            self.on_trajectory_state_changed(self.trajectory_enabled)
+
+        print(
+            "Trajectory:",
+            "ON" if self.trajectory_enabled else "OFF",
+        )
+
+    def toggle_trajectory(self):
+        self.set_trajectory_enabled(
+            not self.trajectory_enabled
+        )
+
+    def set_trajectory_interval(self, interval_seconds):
+        interval_seconds = float(interval_seconds)
+        if interval_seconds <= 0.0:
+            raise ValueError("Trajectory interval must be greater than 0.")
+
+        self.trajectory_interval = interval_seconds
+        self.last_trajectory_sample_time = 0.0
+
+        print(
+            f"Trajectory interval: {self.trajectory_interval * 1000.0:.0f} ms"
+        )
+
+    def clear_trajectories(self):
+        self.last_trajectory_sample_time = 0.0
+
+        for marker in self.markers:
+            marker["trajectory_points"].clear()
+            marker["last_trajectory_position"] = None
+
+        for view in list(self.views):
+            window = view.window
+
+            def update_view(v=view):
+                if v not in self.views:
+                    return
+
+                v.clear_trajectories()
+                v.widget.force_redraw()
+
+            gui.Application.instance.post_to_main_thread(
+                window,
+                update_view,
+            )
+
+    def _on_trajectory_tick(self):
+        if not self.trajectory_enabled:
+            return False
+
+        if not self.views or not self.markers:
+            return False
+
+        now = time.monotonic()
+
+        if (
+            now - self.last_trajectory_sample_time
+            < self.trajectory_interval
+        ):
+            return False
+
+        self.last_trajectory_sample_time = now
+        return self.sample_trajectories()
+
+    def _append_trajectory_references(self, marker):
+        """Append one per-view reference transform for one trajectory point.
+
+        The shared trajectory point remains Machine World coordinates.
+        Each SceneView independently records its currently fixed joint world_T.
+        """
+        for view in list(self.views):
+            view.append_trajectory_reference(marker)
+
+    def sample_trajectories(self):
+        if not self.views or not self.markers:
+            return False
+
+        # All views represent the same machine state. Use one view only for
+        # node-path -> node resolution and world-position calculation.
+        source_view = self.views[0]
+        changed_markers = []
+
+        for marker in self.markers:
+            position = source_view.get_marker_world_position(marker)
+            if position is None:
+                continue
+
+            position = np.asarray(position, dtype=float)
+            last_position = marker.get("last_trajectory_position")
+
+            if last_position is None:
+                marker["trajectory_points"].append(position.copy())
+                marker["last_trajectory_position"] = position.copy()
+                self._append_trajectory_references(marker)
+                changed_markers.append(marker)
+                continue
+
+            distance = float(
+                np.linalg.norm(position - last_position)
+            )
+
+            if distance <= self.trajectory_min_distance:
+                continue
+
+            marker["trajectory_points"].append(position.copy())
+            marker["last_trajectory_position"] = position.copy()
+            self._append_trajectory_references(marker)
+            changed_markers.append(marker)
+
+        if not changed_markers:
+            return False
+
+        # Tick callbacks execute on the GUI thread, so geometry updates can be
+        # performed directly here.
+        for view in list(self.views):
+            for marker in changed_markers:
+                view.update_trajectory(marker)
+            view.widget.force_redraw()
+
+        return True
 
     def clear_markers(self):
         self.markers.clear()
         self.next_marker_id = 0
+        self.last_trajectory_sample_time = 0.0
 
         for view in list(self.views):
             window = view.window
