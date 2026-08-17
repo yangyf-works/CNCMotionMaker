@@ -49,17 +49,32 @@ class SceneViewManager:
 
             view.widget.force_redraw()
 
-    def add_marker(self, node_path, local_position):
+    def _create_marker(
+        self,
+        node_path,
+        local_position,
+        source="manual",
+    ):
         marker = {
             "id": self.next_marker_id,
             "node_path": tuple(node_path),
             "local_position": np.asarray(local_position, dtype=float).copy(),
             "trajectory_points": [],
             "last_trajectory_position": None,
+            "source": source,
         }
 
         self.next_marker_id += 1
         self.markers.append(marker)
+        return marker
+
+    def add_marker(self, node_path, local_position):
+        # Used by manual Ctrl + double-click marker creation.
+        marker = self._create_marker(
+            node_path,
+            local_position,
+            source="manual",
+        )
 
         for view in list(self.views):
             window = view.window
@@ -161,11 +176,6 @@ class SceneViewManager:
         return self.sample_trajectories()
 
     def _append_trajectory_references(self, marker):
-        """Append one per-view reference transform for one trajectory point.
-
-        The shared trajectory point remains Machine World coordinates.
-        Each SceneView independently records its currently fixed joint world_T.
-        """
         for view in list(self.views):
             view.append_trajectory_reference(marker)
 
@@ -173,51 +183,144 @@ class SceneViewManager:
         if not self.views or not self.markers:
             return False
 
-        # All views represent the same machine state. Use one view only for
-        # node-path -> node resolution and world-position calculation.
         source_view = self.views[0]
         changed_markers = []
 
         for marker in self.markers:
-            position = source_view.get_marker_world_position(marker)
-            if position is None:
-                continue
-
-            position = np.asarray(position, dtype=float)
-            last_position = marker.get("last_trajectory_position")
-
-            if last_position is None:
-                marker["trajectory_points"].append(position.copy())
-                marker["last_trajectory_position"] = position.copy()
-                self._append_trajectory_references(marker)
-                changed_markers.append(marker)
-                continue
-
-            distance = float(
-                np.linalg.norm(position - last_position)
+            world_position = (
+                source_view.get_marker_world_position(marker)
             )
 
-            if distance <= self.trajectory_min_distance:
+            if world_position is None:
                 continue
 
-            marker["trajectory_points"].append(position.copy())
-            marker["last_trajectory_position"] = position.copy()
+            world_position = np.asarray(
+                world_position,
+                dtype=float,
+            )
+
+            marker_changed = False
+
+            for view in list(self.views):
+                sample_position = (
+                    view.get_marker_trajectory_position(marker)
+                )
+
+                if sample_position is None:
+                    continue
+
+                sample_position = np.asarray(
+                    sample_position,
+                    dtype=float,
+                )
+
+                marker_id = marker["id"]
+
+                last_position = (
+                    view.trajectory_last_sample_positions.get(
+                        marker_id
+                    )
+                )
+
+                if last_position is None:
+                    marker_changed = True
+                else:
+                    distance = float(
+                        np.linalg.norm(
+                            sample_position - last_position
+                        )
+                    )
+
+                    if (
+                        distance
+                        > self.trajectory_min_distance
+                    ):
+                        marker_changed = True
+
+            if not marker_changed:
+                continue
+
+            marker["trajectory_points"].append(
+                world_position.copy()
+            )
+
+            marker["last_trajectory_position"] = (
+                world_position.copy()
+            )
+
+            for view in list(self.views):
+                sample_position = (
+                    view.get_marker_trajectory_position(marker)
+                )
+
+                if sample_position is None:
+                    continue
+
+                view.trajectory_last_sample_positions[
+                    marker["id"]
+                ] = np.asarray(
+                    sample_position,
+                    dtype=float,
+                ).copy()
+
             self._append_trajectory_references(marker)
+
             changed_markers.append(marker)
 
         if not changed_markers:
             return False
 
-        # Tick callbacks execute on the GUI thread, so geometry updates can be
-        # performed directly here.
         for view in list(self.views):
             for marker in changed_markers:
                 view.update_trajectory(marker)
+
             view.widget.force_redraw()
 
         return True
 
     def clear_markers(self):
+        json_markers = [
+            marker
+            for marker in self.markers
+            if marker.get("source") == "json"
+        ]
+
+        self.markers = json_markers
+        self.last_trajectory_sample_time = 0.0
+
+        if self.markers:
+            self.next_marker_id = (
+                max(marker["id"] for marker in self.markers) + 1
+            )
+        else:
+            self.next_marker_id = 0
+
+        for marker in self.markers:
+            marker["trajectory_points"].clear()
+            marker["last_trajectory_position"] = None
+
+        for view in list(self.views):
+            window = view.window
+
+            def update_view(v=view):
+                if v not in self.views:
+                    return
+
+                # Rebuild marker geometry from the retained JSON marker set.
+                v.clear_markers()
+
+                for marker in self.markers:
+                    v.add_marker(marker)
+
+                v.widget.force_redraw()
+                v.window.set_needs_layout()
+
+            gui.Application.instance.post_to_main_thread(
+                window,
+                update_view
+            )
+
+    def clear_all_markers(self):
         self.markers.clear()
         self.next_marker_id = 0
         self.last_trajectory_sample_time = 0.0
@@ -249,22 +352,38 @@ class SceneViewManager:
         return max(0, len(self.views) - 1)
 
     def load_json_model(self, json_path):
-        self.clear_markers()
+        self.markers.clear()
+        self.next_marker_id = 0
+        self.last_trajectory_sample_time = 0.0
         self.current_json_path = json_path
 
         if not self.views:
             return
 
         main_view = self.views[0]
+        main_view.clear_markers()
         main_view.load_json_model(json_path)
         main_view.widget.force_redraw()
+
+        for request in main_view.get_json_marker_requests():
+            marker = self._create_marker(
+                request["node_path"],
+                request["local_position"],
+                source="json",
+            )
+            main_view.add_marker(marker)
 
         for view in self.views[1:]:
             def update_view(v=view, path=json_path):
                 if v not in self.views:
                     return
 
+                v.clear_markers()
                 v.load_json_model(path)
+
+                for marker in self.markers:
+                    v.add_marker(marker)
+
                 v.widget.force_redraw()
                 v.window.set_needs_layout()
 

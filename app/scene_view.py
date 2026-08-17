@@ -79,6 +79,11 @@ class SceneView:
         self.selected_joint_node = None
         self.selected_joint_lock_T = None
 
+        self.fixed_joint_label = gui.Label("Fixed: -")
+        self.fixed_joint_label.text_color = gui.Color(1.0, 0.6, 0.1)
+        self.fixed_joint_label.background_color = gui.Color(0.0, 0.0, 0.0, 0.0)
+        self.fixed_joint_label.visible = False
+
         self.rotation_axis_length_ratio = 0.1
         self.rotation_axis_min_length = 1.0
         self.rotation_axis_probe_min = 1e-4
@@ -102,10 +107,13 @@ class SceneView:
         # Per-view reference-transform history for trajectory display.
         # trajectory_points themselves remain Machine World coordinates.
         self.trajectory_reference_transforms = {}
+        self.trajectory_last_sample_positions = {}
+        
+        self.json_marker_specs = []
 
         self.marker_material = rendering.MaterialRecord()
-        self.marker_material.shader = "defaultLit"
-        self.marker_material.base_color = [1.0, 0.0, 0.0, 1.0]
+        self.marker_material.shader = "defaultLitTransparency"
+        self.marker_material.base_color = [1.0, 0.0, 0.0, 0.6]
         self.marker_radius = 1.0
 
         self.trajectory_geometry_names = set()
@@ -253,6 +261,46 @@ class SceneView:
 
         return (node.world_T @ p)[:3]
 
+    def get_marker_trajectory_position(self, marker):
+        world_position = self.get_marker_world_position(marker)
+
+        if world_position is None:
+            return None
+
+        # 固定関節なし
+        if (
+            self.selected_joint_node is None
+            or self.selected_joint_lock_T is None
+        ):
+            return np.asarray(
+                world_position,
+                dtype=float,
+            )
+
+        # 固定関節あり
+        p = np.array([
+            world_position[0],
+            world_position[1],
+            world_position[2],
+            1.0,
+        ])
+
+        try:
+            relative_p = (
+                np.linalg.inv(
+                    self.selected_joint_node.world_T
+                )
+                @ p
+            )
+
+            return relative_p[:3]
+
+        except np.linalg.LinAlgError:
+            return np.asarray(
+                world_position,
+                dtype=float,
+            )
+
     def append_trajectory_reference(self, marker):
         marker_id = marker["id"]
         references = self.trajectory_reference_transforms.setdefault(
@@ -399,6 +447,7 @@ class SceneView:
 
         self.trajectory_geometry_names.clear()
         self.trajectory_reference_transforms.clear()
+        self.trajectory_last_sample_positions.clear()
         self.widget.force_redraw()
 
     def clear_markers(self):
@@ -427,6 +476,118 @@ class SceneView:
         self.fit_camera_to_model(axis)
         self.save_initial_camera_state()
 
+    def _extract_json_marker_specs(self, data):
+        self.json_marker_specs = []
+
+        definitions = data.get("definitions", {})
+        if not isinstance(definitions, dict):
+            return
+
+        for definition_name, definition in definitions.items():
+            if not isinstance(definition, dict):
+                continue
+
+            if definition.get("type") != "node":
+                continue
+
+            children = definition.get("children", [])
+            if not isinstance(children, list):
+                continue
+
+            normal_children = []
+
+            for child in children:
+                if not isinstance(child, dict) or child.get("ref") != "$marker":
+                    normal_children.append(child)
+                    continue
+
+                transform = child.get("transform", {})
+                if not isinstance(transform, dict):
+                    transform = {}
+
+                position = transform.get("position", [0.0, 0.0, 0.0])
+
+                try:
+                    local_position = np.asarray(
+                        position,
+                        dtype=float,
+                    ).reshape(-1)
+                except (TypeError, ValueError):
+                    print(
+                        f'Invalid $marker position in definition '
+                        f'"{definition_name}": {position}'
+                    )
+                    continue
+
+                if (
+                    local_position.size != 3
+                    or not np.all(np.isfinite(local_position))
+                ):
+                    print(
+                        f'Invalid $marker position in definition '
+                        f'"{definition_name}": {position}'
+                    )
+                    continue
+
+                self.json_marker_specs.append(
+                    {
+                        "definition_name": str(definition_name),
+                        "local_position": local_position.copy(),
+                    }
+                )
+
+            # Prevent model_builder from trying defs["$marker"].
+            definition["children"] = normal_children
+
+    def get_json_marker_requests(self):
+        if not self.json_marker_specs or not self.roots:
+            return []
+
+        specs_by_definition = {}
+
+        for spec in self.json_marker_specs:
+            specs_by_definition.setdefault(
+                spec["definition_name"],
+                [],
+            ).append(spec["local_position"])
+
+        requests = []
+
+        def walk(node):
+            node_name = str(getattr(node, "name", ""))
+
+            for definition_name, positions in specs_by_definition.items():
+                matches_definition = (
+                    node_name == definition_name
+                    or node_name.endswith("." + definition_name)
+                )
+
+                if not matches_definition:
+                    continue
+
+                node_path = self.get_node_path(node)
+                if node_path is None:
+                    continue
+
+                for local_position in positions:
+                    requests.append(
+                        {
+                            "node_path": tuple(node_path),
+                            "local_position": np.asarray(
+                                local_position,
+                                dtype=float,
+                            ).copy(),
+                        }
+                    )
+
+            for child in getattr(node, "children", []):
+                walk(child)
+
+        for root in self.roots:
+            walk(root)
+
+        return requests
+
     def load_json_model(self, json_path: Path):
         try:
             self.clear_selected_joint(
@@ -436,6 +597,10 @@ class SceneView:
             
             with open(json_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
+
+            # '$marker' is a reserved pseudo-child, not a normal definition ref.
+            # Extract it before model_builder resolves children.
+            self._extract_json_marker_specs(data)
 
             self._build_model_from_json(data, json_path)
             self.refresh_model()
@@ -2010,6 +2175,8 @@ class SceneView:
         self.selected_joint_node = joint_node
         self.selected_joint_lock_T = joint_node.world_T.copy()
 
+        self.update_fixed_joint_label()
+
         # The trajectory reference coordinate system changed.
         # Clear only the trajectory; markers and Trace ON/OFF stay unchanged.
         if self.on_trajectory_reference_changed is not None:
@@ -2026,7 +2193,18 @@ class SceneView:
             self.on_model_selected(self.selected_joint)
 
         return self.selected_joint
-  
+
+    def update_fixed_joint_label(self):
+        if self.selected_joint is None:
+            self.fixed_joint_label.visible = False
+        else:
+            self.fixed_joint_label.visible = True
+            self.fixed_joint_label.text = (
+                f"Fixed: {self.selected_joint.name}"
+            )
+
+        self.window.set_needs_layout()
+    
     def find_nearest_joint(self, target_node):
         selectable_types = {
             "linear",
@@ -2074,6 +2252,8 @@ class SceneView:
         self.selected_joint = None
         self.selected_joint_node = None
         self.selected_joint_lock_T = None
+
+        self.update_fixed_joint_label()
 
         if had_selection and self.on_trajectory_reference_changed is not None:
             self.on_trajectory_reference_changed()

@@ -190,14 +190,6 @@ class MainWindow:
         self.add_view_button.set_on_clicked(
             self._on_add_view_clicked
         )
-        self.remove_view_button = gui.Button("- View")
-        self.remove_view_button.background_color = gui.Color(
-            0.50, 0.08, 0.08, 1.0,
-        )
-        self.remove_view_button.set_on_clicked(
-            self._on_remove_view_clicked
-        )
-        self.remove_view_button.enabled = False
 
         self.trajectory_button = gui.Button("Trace ON")
         self.trajectory_button.background_color = gui.Color(
@@ -214,8 +206,8 @@ class MainWindow:
         self.window.add_child(self.scene_view.widget)
         self.window.add_child(self.control_panel.widget)
         self.window.add_child(self.add_view_button)
-        self.window.add_child(self.remove_view_button)
         self.window.add_child(self.trajectory_button)
+        self.window.add_child(self.scene_view.fixed_joint_label)
 
         self.window.set_on_layout(self._on_layout)
         self.window.set_on_close(self._on_close)
@@ -258,7 +250,6 @@ class MainWindow:
             return
 
         self.add_view_button.enabled = False
-        self.remove_view_button.enabled = False
 
         gui.Application.instance.post_to_main_thread(
             self.window,
@@ -451,7 +442,6 @@ class MainWindow:
     
     def _view_add_remove_btn_update(self):
         sub_count = self.scene_manager.sub_view_count()
-        self.remove_view_button.enabled = sub_count > 0
         self.add_view_button.enabled = sub_count < 3
 
     def _on_remove_view_clicked(self):
@@ -459,7 +449,6 @@ class MainWindow:
             return
         
         self.add_view_button.enabled = False
-        self.remove_view_button.enabled = False
 
         gui.Application.instance.post_to_main_thread(
             self.window,
@@ -509,6 +498,7 @@ class MainWindow:
 
         extra_window.add_child(extra_scene_view.widget)
         extra_window.add_child(close_button)
+        extra_window.add_child(extra_scene_view.fixed_joint_label)
 
         extra_window.set_on_layout(
             lambda layout_context,
@@ -551,6 +541,16 @@ class MainWindow:
             rect.y + margin,
             button_size,
             button_size,
+        )
+
+        fixed_label_width = int(8 * em)
+        fixed_label_height = int(2 * em)
+
+        extra_scene_view.fixed_joint_label.frame = gui.Rect(
+            rect.x + margin,
+            rect.y + margin,
+            fixed_label_width,
+            fixed_label_height,
         )
 
     def _on_extra_close_button(
@@ -609,31 +609,39 @@ class MainWindow:
         margin = int(0.5 * em)
 
         trajectory_button_width = int(6 * em)
-        self.trajectory_button.frame = gui.Rect(
-            rect.x + margin,
+        self.add_view_button.frame = gui.Rect(
+            rect.x
+            + rect.width
+            - panel_width
+            - button_width
+            - margin,
+
             rect.y + margin,
+
+            button_width,
+            button_height,
+        )
+        self.trajectory_button.frame = gui.Rect(
+            rect.x
+            + rect.width
+            - panel_width
+            - button_width
+            - trajectory_button_width
+            - margin * 2,
+
+            rect.y + margin,
+
             trajectory_button_width,
             button_height,
         )
+        fixed_label_width = int(5 * em)
+        fixed_label_height = int(1.3 * em)
 
-        self.remove_view_button.frame = gui.Rect(
-            rect.x + rect.width
-            - panel_width
-            - button_width
-            - margin,
-            rect.y + margin * 2 + button_height,
-            button_width,
-            button_height,
-        )
-
-        self.add_view_button.frame = gui.Rect(
-            rect.x + rect.width
-            - panel_width
-            - button_width
-            - margin,
+        self.scene_view.fixed_joint_label.frame = gui.Rect(
+            rect.x + margin,
             rect.y + margin,
-            button_width,
-            button_height
+            fixed_label_width,
+            fixed_label_height,
         )
 
         self.scene_view.widget.frame = gui.Rect(
