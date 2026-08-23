@@ -40,7 +40,10 @@ class SceneViewManager:
         view.window.set_on_tick_event(self._on_trajectory_tick)
 
         if self.current_json_path is not None:
-            view.load_json_model(self.current_json_path)
+            view.load_json_model(
+                self.current_json_path,
+                apply_fixed_joint=(view is self.views[0]),
+            )
 
             # Restore existing markers and their trajectories in the new view.
             for marker in self.markers:
@@ -362,7 +365,7 @@ class SceneViewManager:
 
         main_view = self.views[0]
         main_view.clear_markers()
-        main_view.load_json_model(json_path)
+        main_view.load_json_model(json_path, apply_fixed_joint=True)
         main_view.widget.force_redraw()
 
         for request in main_view.get_json_marker_requests():

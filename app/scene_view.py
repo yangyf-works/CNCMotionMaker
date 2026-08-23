@@ -588,7 +588,80 @@ class SceneView:
 
         return requests
 
-    def load_json_model(self, json_path: Path):
+    def apply_json_fixed_joint(self, data):
+        definitions = data.get("definitions", {})
+
+        if not isinstance(definitions, dict):
+            return False
+
+        for definition_name, definition in definitions.items():
+            if not isinstance(definition, dict):
+                continue
+
+            if definition.get("type") != "node":
+                continue
+
+            joint_data = definition.get("joint")
+
+            if not isinstance(joint_data, dict):
+                continue
+
+            joint_type = joint_data.get("type")
+
+            if joint_type not in {"linear", "rotate"}:
+                continue
+
+            fix_value = joint_data.get("fix", False)
+
+            if fix_value is not True and fix_value != 1:
+                continue
+
+            target_joint_name = joint_data.get("name")
+
+            for node in self.iter_joint_nodes():
+                joint = getattr(node, "joint", None)
+
+                if joint is None:
+                    continue
+
+                if joint.type not in {"linear", "rotate"}:
+                    continue
+
+                if target_joint_name:
+                    if joint.name != target_joint_name:
+                        continue
+                else:
+                    node_name = str(getattr(node, "name", ""))
+
+                    matches_definition = (
+                        node_name == definition_name
+                        or node_name.endswith("." + definition_name)
+                    )
+
+                    if not matches_definition:
+                        continue
+
+                self.selected_joint = joint
+                self.selected_joint_node = node
+                self.selected_joint_lock_T = node.world_T.copy()
+
+                self.update_fixed_joint_label()
+
+                if self.on_model_selected is not None:
+                    self.on_model_selected(joint)
+
+                print(
+                    f"JSON fixed joint: {joint.name} "
+                    f"({joint.type})"
+                )
+
+                return True
+
+        return False
+
+    def load_json_model(self, json_path: Path,
+        apply_fixed_joint=False,
+    ):
         try:
             self.clear_selected_joint(
                 refresh=False,
@@ -604,6 +677,11 @@ class SceneView:
 
             self._build_model_from_json(data, json_path)
             self.refresh_model()
+            # メインビューだけ、JSON で指定された FIXED を適用する。
+            if apply_fixed_joint:
+                fixed = self.apply_json_fixed_joint(data)
+                if fixed:
+                    self.refresh_model(model_reset=False)
 
             self.rebuild_joint_axes()
             self.set_joint_axes_visible(self.show_axis)

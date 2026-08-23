@@ -164,7 +164,8 @@
         "pivot":[0, 0, 0],
         "axis": [0, 1, 0],
         "path": 1,
-        "axisno": 5
+        "axisno": 5,
+        "fix": true
       }
     },
     "tableBC": {
