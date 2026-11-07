@@ -23,7 +23,8 @@ class SceneView:
         self, window, 
         on_mouse_down= None,
         on_model_selected=None,
-        default_camera_view="default"
+        default_camera_view="default",
+        on_fixed_joint_label_changed=None,
         ):
         self.window = window
         self.default_camera_view = default_camera_view
@@ -79,10 +80,13 @@ class SceneView:
         self.selected_joint_node = None
         self.selected_joint_lock_T = None
 
-        self.fixed_joint_label = gui.Label("Fixed: -")
-        self.fixed_joint_label.text_color = gui.Color(1.0, 0.6, 0.1)
-        self.fixed_joint_label.background_color = gui.Color(0.0, 0.0, 0.0, 0.0)
-        self.fixed_joint_label.visible = False
+        self.on_fixed_joint_label_changed = on_fixed_joint_label_changed
+        self.fixed_joint_label = None
+        if on_fixed_joint_label_changed is None:
+            self.fixed_joint_label = gui.Label("")
+            self.fixed_joint_label.text_color = gui.Color(1.0, 0.6, 0.1)
+            self.fixed_joint_label.background_color = gui.Color(0.0, 0.0, 0.0, 0.0)
+            self.fixed_joint_label.visible = False
 
         self.rotation_axis_length_ratio = 0.1
         self.rotation_axis_min_length = 1.0
@@ -1160,8 +1164,9 @@ class SceneView:
             bounds = self.get_scene_bbox()
 
         center = np.asarray(bounds.get_center(), dtype=float)
+        fov = 60.0
         self.widget.setup_camera(
-            60.0,
+            fov,
             bounds,
             center
         )
@@ -1193,13 +1198,16 @@ class SceneView:
 
         if setting is not None:
             direction, up = setting
-            eye = center + direction * distance
         else:
             direction = np.array([1.0, 1.0, 1.0])
             up = np.array([0.0, 1.0, 0.0])
 
             direction /= np.linalg.norm(direction)
-            eye = center + direction * distance * 1.2
+            distance *= 1.2
+
+        if geometry is None:
+            center, distance = self._frame_projected_model(center, direction, up, distance, fov)
+        eye = center + direction * distance
 
         self.widget.look_at(
             center,
@@ -1209,8 +1217,54 @@ class SceneView:
 
         self.widget.force_redraw()
 
+    def _frame_projected_model(self, center, direction, up, distance, fov):
+        right = np.cross(up, direction)
+        right /= np.linalg.norm(right)
+        camera_axes = np.column_stack((right, np.cross(direction, right), direction))
+        correction = self.get_display_correction_T()
+        camera_points = []
+        for item in collect_visible_meshes(self.roots):
+            vertices = np.asarray(item["mesh"].vertices)
+            if len(vertices):
+                transform = correction @ item["world_T"]
+                positions = vertices @ transform[:3, :3].T + transform[:3, 3] - center
+                camera_points.append(positions @ camera_axes)
+        if not camera_points:
+            return center, distance
+
+        points = np.concatenate(camera_points)
+        plane = points[:, :2]
+        toward_eye = points[:, 2:]
+        # Every viewport fills its Open3D client area. The widget frame can lag a resize.
+        size = self.window.size
+        aspect = size.width / size.height if size.width > 0 and size.height > 0 else 1.0
+        slope = 0.9 * math.tan(math.radians(fov) / 2) * np.array([aspect, 1.0])
+
+        # At this distance a translated camera can fit every point within the padded frustum.
+        nearest = (plane + slope * toward_eye).max(axis=0)
+        farthest = (plane - slope * toward_eye).min(axis=0)
+        fit_distance = ((nearest - farthest) / (2 * slope)).max()
+        near_plane = self.widget.scene.camera.get_near()
+        distance = max(distance, fit_distance, toward_eye.max() + 1.01 * near_plane)
+        depth = distance - toward_eye
+
+        # The midpoint of the perspective bounds decreases as the camera pans.
+        lower, upper = plane.min(axis=0), plane.max(axis=0)
+        for _ in range(20):
+            offset = (lower + upper) / 2
+            projected = (plane - offset) / depth
+            midpoint_positive = projected.min(axis=0) + projected.max(axis=0) > 0
+            lower = np.where(midpoint_positive, offset, lower)
+            upper = np.where(midpoint_positive, upper, offset)
+
+        offset = (lower + upper) / 2
+        return center + camera_axes[:, :2] @ offset, distance
+
     def on_reset_camera(self):
-        self.restore_initial_camera_state()
+        if self.roots:
+            self.fit_camera_to_model()
+        else:
+            self.restore_initial_camera_state()
         
     def on_save_stl(self):
         print("Save STL")
@@ -2273,15 +2327,13 @@ class SceneView:
         return self.selected_joint
 
     def update_fixed_joint_label(self):
-        if self.selected_joint is None:
-            self.fixed_joint_label.visible = False
+        text = f"Fixed: {self.selected_joint.name}" if self.selected_joint is not None else ""
+        if self.on_fixed_joint_label_changed is not None:
+            self.on_fixed_joint_label_changed(text)
         else:
-            self.fixed_joint_label.visible = True
-            self.fixed_joint_label.text = (
-                f"Fixed: {self.selected_joint.name}"
-            )
-
-        self.window.set_needs_layout()
+            self.fixed_joint_label.text = text
+            self.fixed_joint_label.visible = bool(text)
+            self.window.set_needs_layout()
     
     def find_nearest_joint(self, target_node):
         selectable_types = {

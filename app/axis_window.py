@@ -61,6 +61,13 @@ class AxisControlWindowQt(QWidget):
         self._repeat_amount = 0.0
 
         apply_common_dark_theme(self)
+
+    def stop_all_processing(self):
+        self._stop_repeat_jog()
+
+    def closeEvent(self, event):
+        self.stop_all_processing()
+        super().closeEvent(event)
     
     def create_content_ui(self, parent):
         root_layout = QHBoxLayout(parent)

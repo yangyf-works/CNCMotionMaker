@@ -2,11 +2,10 @@ import sys
 from pathlib import Path
 
 import open3d.visualization.gui as gui  # type: ignore
-from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QApplication, QInputDialog
+from PySide6.QtWidgets import QApplication
 
 from app.main_window import MainWindow
-from app.qt_style import TitleBar, apply_common_dark_theme
+from app.qt_style import apply_common_dark_theme
 
 
 def get_app_root() -> Path:
@@ -29,13 +28,21 @@ def main():
 
     apply_common_dark_theme(qt_app)
 
-    gui.Application.instance.initialize()
-
-    MainWindow(root_path = get_app_root(), 
-               json_dir = get_JSON_path())
-
-    gui.Application.instance.run()
+    # Tool windows must not terminate Qt while the main window is being built.
+    qt_app.setQuitOnLastWindowClosed(False)
+    window = None
+    try:
+        gui.Application.instance.initialize()
+        window = MainWindow(root_path=get_app_root(), json_dir=get_JSON_path())
+        qt_app.aboutToQuit.connect(window.shutdown)
+        window.start()
+        return qt_app.exec()
+    finally:
+        if window is not None:
+            window.shutdown()
+        else:
+            gui.Application.instance.quit()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

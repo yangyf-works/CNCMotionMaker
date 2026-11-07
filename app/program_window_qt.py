@@ -329,6 +329,14 @@ class MachinePanelQt(QMainWindow):
 
     def on_close_clicked(self):
         pass
+
+    def stop_all_processing(self):
+        self.stop()
+        self.disconnect_machine()
+
+    def closeEvent(self, event):
+        self.stop_all_processing()
+        super().closeEvent(event)
     
     def create_program_tab(self):
         self.editor = ProgramEditor()
