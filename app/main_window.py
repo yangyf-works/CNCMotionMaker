@@ -37,6 +37,7 @@ class MainWindow(QMainWindow):
         self.scene_view = None
         self.axis_window = None
         self.program_window = None
+        self._panels_to_restore = None
         self.native_api = None
         self.host = None
         self.extra_windows = []
@@ -176,6 +177,8 @@ class MainWindow(QMainWindow):
             QPushButton#AddViewButton { background-color: #267326; }
             QPushButton#AddViewButton:hover { background-color: #328b32; }
             QPushButton#AddViewButton:disabled { background-color: #303030; color: #808080; }
+            QPushButton#PanelVisibilityButton { background-color: #68458c; }
+            QPushButton#PanelVisibilityButton:hover { background-color: #7a549e; }
         """)
         layout = QHBoxLayout(toolbar)
         layout.setContentsMargins(8, 8, 8, 4)
@@ -190,16 +193,23 @@ class MainWindow(QMainWindow):
         self.trajectory_button.setObjectName("TraceButton")
         self.trajectory_button.setCheckable(True)
         self.trajectory_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.trajectory_button.setFixedSize(96, 32)
+        self.trajectory_button.setFixedSize(88, 28)
         self.trajectory_button.clicked.connect(self._on_trajectory_button_clicked)
         layout.addWidget(self.trajectory_button)
 
         self.add_view_button = QPushButton("+ View", toolbar)
         self.add_view_button.setObjectName("AddViewButton")
         self.add_view_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.add_view_button.setFixedSize(64, 32)
+        self.add_view_button.setFixedSize(60, 28)
         self.add_view_button.clicked.connect(self._on_add_view_clicked)
         layout.addWidget(self.add_view_button)
+
+        self.panel_visibility_button = QPushButton("Hide Panels", toolbar)
+        self.panel_visibility_button.setObjectName("PanelVisibilityButton")
+        self.panel_visibility_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.panel_visibility_button.setFixedSize(104, 28)
+        self.panel_visibility_button.clicked.connect(self._toggle_tool_panels)
+        layout.addWidget(self.panel_visibility_button)
         return toolbar
 
     def _on_trajectory_button_clicked(self):
@@ -209,6 +219,25 @@ class MainWindow(QMainWindow):
     def _on_trajectory_state_changed(self, enabled):
         self.trajectory_button.setChecked(enabled)
         self.trajectory_button.setText("Trace ON" if enabled else "Trace OFF")
+
+    def _toggle_tool_panels(self):
+        if self._closing:
+            return
+        if self._panels_to_restore is None:
+            panels = tuple(
+                panel for panel in (self.axis_window, self.program_window) if panel.isVisible()
+            )
+            if not panels:
+                return
+            self._panels_to_restore = panels
+            for panel in panels:
+                panel.hide()
+            self.panel_visibility_button.setText("Show Panels")
+        else:
+            for panel in self._panels_to_restore:
+                panel.show()
+            self._panels_to_restore = None
+            self.panel_visibility_button.setText("Hide Panels")
 
     def _on_layout(self, _):
         self.scene_view.widget.frame = self.window.content_rect
@@ -444,6 +473,8 @@ class MainWindow(QMainWindow):
         gui.Application.instance.post_to_main_thread(self.window, update)
 
     def _move_sub_window(self):
+        if self._panels_to_restore is not None:
+            return
         rect = self.frameGeometry()
         for panel, x in (
             (self.axis_window, rect.right() + 1 + self.window_gap),
